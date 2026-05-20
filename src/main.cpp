@@ -1,300 +1,42 @@
-/***********************************************************************
- * Balance-Bot Inner Loop Controller
- *
- * ═══════════════════════════════════════════════════════════════════
- * PLANT MODEL
- * ═══════════════════════════════════════════════════════════════════
- *
- * The robot is an inverted pendulum. Small-angle EOM:
- *
- *   θ̈ = (g/l)·θ  −  (r/l)·ω̇_wheel
- *
- *   θ        = tilt angle (rad), positive = lean forward
- *   g        = 9.81 m/s²
- *   l        = CoM height above wheel axle (m)
- *   r        = wheel radius (m)
- *   ω_wheel  = wheel angular speed (rad/s)  ← our control input U
- *
- * Taking the Laplace transform and rearranging, the plant from
- * wheel SPEED command Ω(s) to tilt angle Θ(s) is:
- *
- *         Θ(s)         −(r/l)·s
- *   G(s) = ──── = ─────────────────
- *         Ω(s)      s²  −  g/l
- *
- * Key observations:
- *   • Unstable open-loop pole at  s = +√(g/l)
- *   • Zero at s = 0  (plant contributes NO DC gain)
- *
- * WHY SPEED AND NOT ACCELERATION?
- *   Stepper drivers accept step pulses → you control frequency → speed.
- *   setTargetSpeedRad() is the only available actuator interface.
- *   Commanding acceleration would require a double integrator plant,
- *   which has positive DC gain and is unstable under negative feedback.
- *   Speed output with G(s) above is stable under negative feedback
- *   provided Kd > l/r  (see stability analysis below).
- *
- * ═══════════════════════════════════════════════════════════════════
- * STEP LIBRARY — UNIT ANALYSIS
- * ═══════════════════════════════════════════════════════════════════
- *
- *   MICROSTEPS  = 16
- *   STEPS       = 200   (full steps per revolution)
- *   STEP_ANGLE  = 2π / (200×16) = 2π/3200 ≈ 1.963×10⁻³ rad/microstep
- *
- *   setTargetSpeedRad(ω):
- *     tSpeed = ω × SPEED_SCALE / STEP_ANGLE
- *            = ω × 2000 / 1.963e-3
- *            = ω × 1,018,591   (internal integer units)
- *
- *   getSpeedRad():
- *     returns  speed × STEP_ANGLE / SPEED_SCALE  → genuine rad/s ✓
- *
- *   MAX_SPEED = 10,000 steps/s
- *     → ω_max = 10000 × STEP_ANGLE = 10000 × 1.963e-3 ≈ 19.6 rad/s
- *
- *   The PID output must be constrained to ±19.6 rad/s.
- *   setAccelerationRad() is a slew-rate limiter only — NOT a control
- *   output. Set it high (≥1000 rad/s²) so it does not restrict PID.
- *
- * ═══════════════════════════════════════════════════════════════════
- * CLOSED-LOOP ANALYSIS  (negative feedback, PID)
- * ═══════════════════════════════════════════════════════════════════
- *
- *           Kd·s² + Kp·s + Ki
- *   C(s) = ──────────────────
- *                  s
- *
- * The s in G(s)'s numerator CANCELS the 1/s from the integrator:
- *
- *                   (r/l)·(Kd·s² + Kp·s + Ki)
- *   G(s)·C(s) = − ────────────────────────────
- *                         s²  −  g/l
- *
- * Characteristic equation  1 + G(s)·C(s) = 0 :
- *
- *   (s² − g/l)  −  (r/l)·(Kd·s² + Kp·s + Ki)  =  0
- *
- *   (1 − r·Kd/l)·s²  −  (r·Kp/l)·s  −  (g/l + r·Ki/l)  =  0
- *
- * Multiply through by  −l :
- *
- *   (r·Kd − l)·s²  +  r·Kp·s  +  (g + r·Ki)  =  0
- *
- * ─── Stability (Routh, all coefficients same sign & positive) ───
- *
- *   r·Kd − l  > 0   →   Kd  >  l/r          ← PRIMARY CONDITION
- *   r·Kp      > 0   →   Kp  >  0             ← trivially satisfied
- *   g + r·Ki  > 0   →   Ki  > −g/r ≈ −300   ← trivially satisfied
- *
- * ─── Standard second-order form ─────────────────────────────────
- *
- *   Dividing by (r·Kd − l):
- *
- *             r·Kp              g + r·Ki
- *   s²  +  ────────── · s  +  ─────────  =  0
- *           r·Kd − l           r·Kd − l
- *
- *   Natural frequency:    ωn  =  √( (g + r·Ki) / (r·Kd − l) )
- *
- *                               r·Kp
- *   Damping ratio:         ζ  = ──────────────────────────────
- *                               2·√( (r·Kd−l)·(g + r·Ki) )
- *
- * ─── Bandwidth requirement ───────────────────────────────────────
- *
- *   The open-loop unstable pole is at  p = √(g/l).
- *   Closed-loop bandwidth MUST satisfy:
- *
- *   ωn  >>  √(g/l)    (at least 3× for reliable stabilisation)
- *
- * ═══════════════════════════════════════════════════════════════════
- * DESIGN EQUATIONS  (Ki = 0 starting point)
- * ═══════════════════════════════════════════════════════════════════
- *
- *   Step 1 — Measure robot:  r (wheel radius),  l (CoM height)
- *
- *   Step 2 — Choose target bandwidth:
- *     ωn_target  ≥  3 × √(g/l)
- *
- *   Step 3 — Solve for Kd:
- *     r·Kd − l  =  g / ωn²
- *     Kd  =  ( g/ωn²  +  l ) / r
- *
- *   Step 4 — Solve for Kp  (target ζ = 0.7):
- *     Kp  =  2·ζ·g / (r·ωn)
- *
- *   Example with  r = 0.032 m,  l = 0.20 m,  ωn = 21 rad/s,  ζ = 0.7:
- *     Unstable pole:  √(9.81/0.20) = 7.0 rad/s  →  ωn = 3× = 21 rad/s
- *     Kd = (9.81/441 + 0.20) / 0.032  =  0.222/0.032  ≈  7.0
- *     Kp = 2×0.7×9.81 / (0.032×21)   =  13.73/0.672   ≈  20.4
- *
- *   IMPORTANT — These are theoretical starting values assuming ideal
- *   dynamics. In practice, sensor lag, loop delay (~10ms half-sample),
- *   and friction require higher gains. Use the tuning procedure below
- *   to scale up from these starting points. The RATIOS matter more
- *   than absolute values: maintain Kp / √(Kd) to preserve ζ.
- *
- * ═══════════════════════════════════════════════════════════════════
- * TUNING PROCEDURE
- * ═══════════════════════════════════════════════════════════════════
- *
- *  PHASE 0 — Physical measurements (do this before powering on)
- *  ─────────────────────────────────────────────────────────────
- *  a) Measure wheel radius r with calipers.
- *  b) Hold robot upright by hand, disable motors (EN pin HIGH).
- *     Read theta from serial — this is your REFERENCE_ANGLE.
- *     Set setpoint = this value. Now Ki is not needed.
- *  c) Estimate l: tape measure from axle centre to rough CoM.
- *
- *  PHASE 1 — Find minimum Kd (stability boundary)
- *  ────────────────────────────────────────────────
- *  Condition: Kd_min = l/r
- *  Example: l=0.20, r=0.032 → Kd_min = 6.25
- *  Start at Kd = Kd_min and Kp = 0.
- *  The robot will be marginally stable (sustained oscillation).
- *  This confirms your l/r estimate. If it falls immediately,
- *  increase Kd until oscillation is observed.
- *
- *  PHASE 2 — Increase bandwidth (raise Kd)
- *  ─────────────────────────────────────────
- *  ωn = √(g / (r·Kd − l))
- *  Increase Kd in ×2 steps until oscillation frequency RISES above
- *  roughly 3× your observed unstable pole frequency.
- *  Physical sign: robot tries to balance but oscillates on the spot.
- *
- *  PHASE 3 — Add damping (raise Kp)
- *  ──────────────────────────────────
- *  With Kd fixed, increase Kp to damp oscillations.
- *  Target: ζ = 0.7 → Kp = 2×0.7×√((r·Kd − l)·g) / r
- *  Physical sign: oscillation amplitude decreases; robot holds
- *  position briefly. Stop before it becomes sluggish.
- *
- *  PHASE 4 — Fine tune the ratio
- *  ───────────────────────────────
- *  Robot runs forward and falls → Kd too low relative to Kp.
- *    Increase Kd, or equivalently decrease Kp.
- *  Robot oscillates then falls → Kp too low relative to Kd.
- *    Increase Kp, keeping Kd fixed.
- *  Robot balances but drifts slowly → trim REFERENCE_ANGLE.
- *    Prefer this over adding Ki.
- *
- *  PHASE 5 — Add Ki (only if needed)
- *  ────────────────────────────────────
- *  Ki shifts ωn upward with NO effect on ζ (due to the s-zero
- *  cancellation). It is safe in small amounts.
- *  New ωn = √((g + r·Ki) / (r·Kd − l))
- *  Increase Ki slowly. If oscillations appear, Ki is too high.
- *  Anti-windup clamp (MAX_INTEGRAL) is essential.
- *
- * ═══════════════════════════════════════════════════════════════════
- * DERIVATIVE TERM — USE GYRO DIRECTLY
- * ═══════════════════════════════════════════════════════════════════
- *
- *  The derivative of tilt error is:
- *    d(error)/dt = d(setpoint − θ)/dt ≈ −θ̇  (setpoint is constant)
- *
- *  θ̇ is measured DIRECTLY by the gyroscope (g.gyro.y).
- *  Using −gyro_rate as the D term avoids numerical differentiation
- *  and the noise amplification that comes with it.
- *
- *  D_term = Kd × (−gyro_rate)
- *
- * ═══════════════════════════════════════════════════════════════════
- ***********************************************************************/
 
 #include <Arduino.h>
 #include <Wire.h>
 #include <SPI.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <TimerInterrupt_Generic.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <step.h>
 
-// ─────────────────────────────────────────────────────────────────
-//  Physical parameters — MEASURE THESE ON YOUR ROBOT
-// ─────────────────────────────────────────────────────────────────
-//
-//  Used to compute theoretical starting gains via:
-//    Kd_start = (g / (OMEGA_N * OMEGA_N) + L_COM) / WHEEL_RADIUS
-//    Kp_start = 2 * ZETA * g / (WHEEL_RADIUS * OMEGA_N)
-//
-const float WHEEL_RADIUS = 0.030f;   // r  (m) — measure with calipers
-const float L_COM        = 0.15f;    // l  (m) — axle to CoM height
-const float G_ACCEL      = 9.81f;    // g  (m/s²)
-
-// ─────────────────────────────────────────────────────────────────
-//  Controller design targets
-// ─────────────────────────────────────────────────────────────────
-//
-//  Unstable pole:  p = √(g/l)
-//  For l=0.15m:    p = √(9.81/0.15) = 8.09 rad/s
-//  Target ωn must be >> p. Start at 3×p = 24.3 rad/s → rounded to 25.
-//
 const float OMEGA_N = 25.0f;  // target bandwidth (rad/s) — tune upward
 const float ZETA    = 0.7f;   // target damping ratio
 
-// ─────────────────────────────────────────────────────────────────
-//  Derived theoretical starting gains  (Ki = 0)
-//
-//    Kd = (g/ωn² + l) / r
-//    Kp = 2ζg / (r·ωn)
-//
-//  These are lower bounds. Sensor lag and loop delay will require
-//  scaling both up together (preserve Kp/√Kd ratio to maintain ζ).
-// ─────────────────────────────────────────────────────────────────
-float Kp = 2000.0f;  // saturating — sign determines motor ramp direction
-float Kd =  450.0f;  // gyro braking — primary tuning parameter
+
+float Kp = 2100.0f;  // saturasting — sign determines motor ramp direction
+float Kd =  240.0f;  // gyro braking — primary tuning parameter
 float Ki =    1.0f;  // small steady-state trim
 
-// ─────────────────────────────────────────────────────────────────
-//  Balance setpoint
-//
-//  HOW TO FIND IT:
-//    1. Disable motors (comment out setTargetSpeedRad calls)
-//    2. Hold robot perfectly upright by hand
-//    3. Read theta from serial output
-//    4. Set BALANCE_ANGLE to that value
-//    This eliminates steady-state error without needing Ki.
-// ─────────────────────────────────────────────────────────────────
+
 float BALANCE_ANGLE = 0.06f;  // rad — calibrate per Phase 0 above
 
-// ─────────────────────────────────────────────────────────────────
-//  Complementary filter coefficient
-//
-//  C close to 1 → trusts gyro integration (accurate for fast motion)
-//  (1-C) term → low-pass on accelerometer (corrects long-term drift)
-//
-//  Crossover frequency: fc = (1-C) / (2π·C·Δt)
-//  At C=0.985, Δt=0.005s: fc = 0.015/(2π×0.985×0.005) ≈ 0.48 Hz
-//  Below 0.48 Hz: accelerometer dominates (drift correction)
-//  Above 0.48 Hz: gyro dominates (dynamic accuracy)
-// ─────────────────────────────────────────────────────────────────
-const float CF_COEFF = 0.985f;
+float CF_COEFF = 0.996f;
 
-// ─────────────────────────────────────────────────────────────────
-//  Safety limits
-// ─────────────────────────────────────────────────────────────────
-//
-//  MAX_WHEEL_SPEED: from step.h analysis:
-//    MAX_SPEED = 10,000 steps/s
-//    STEP_ANGLE = 2π/3200 ≈ 1.963e-3 rad/microstep
-//    ω_max = 10000 × 1.963e-3 = 19.6 rad/s
-//  Set software limit just below hardware max.
-//
-const float MAX_WHEEL_SPEED  = 19.0f;  // rad/s — hardware ceiling
-const float MAX_INTEGRAL     = 5.0f;   // anti-windup clamp
+float       maxWheelSpeed    = 19.0f;  // rad/s — hardware ceiling (tunable: mw)
+float       motorAccel       = 30.0f; // rad/s² — stepper slew rate  (tunable: ac)
+const float MAX_INTEGRAL     = 0.1f;   // anti-windup clamp
 const float FALL_ANGLE       = 0.8f;   // rad (~46°) — give up balancing
 
-// ─────────────────────────────────────────────────────────────────
-//  Timing
-// ─────────────────────────────────────────────────────────────────
-//
-//  LOOP_INTERVAL = 5ms → 200 Hz control loop
-//  This gives a half-sample delay of 2.5ms, limiting achievable
-//  closed-loop bandwidth to roughly 1/(5×0.005) = 40 rad/s.
-//  Keep ωn below this limit.
-//
+
+const float MAX_TILT_OFFSET = 0.15f;   // max lean command magnitude (rad, ~8.5°)
+const float MOVE_STEP       = 0.01745f; // rad per W/S keypress (1°)
+const float TURN_STEP       = 2.0f;    // rad/s per A/D keypress
+const float MAX_TURN_BIAS   = 10.0f;   // rad/s
+
+float leanCommand = 0.0f;   // tilt setpoint offset from BALANCE_ANGLE (rad); + = forward
+float turnBias    = 0.0f;   // differential speed for turning (rad/s); + = right
+
+
 const int   LOOP_INTERVAL_MS  = 5;           // ms
 const float LOOP_INTERVAL_S   = 0.005f;      // s  (nominal — actual dt measured per iteration)
 const int   STEPPER_INTERVAL_US = 50;        // µs — 20 kHz ISR
@@ -303,12 +45,149 @@ const int   PRINT_INTERVAL_MS = 2000;         // ms
 // ─────────────────────────────────────────────────────────────────
 //  Pins
 // ─────────────────────────────────────────────────────────────────
-const int STEPPER1_DIR_PIN  = 25;
-const int STEPPER1_STEP_PIN = 26;
-const int STEPPER2_DIR_PIN  = 27;
-const int STEPPER2_STEP_PIN = 4;
+const int STEPPER1_DIR_PIN  = 16;
+const int STEPPER1_STEP_PIN = 17;
+const int STEPPER2_DIR_PIN  = 4;
+const int STEPPER2_STEP_PIN = 14;
 const int STEPPER_EN_PIN    = 15;
 const int TOGGLE_PIN        = 32;
+
+// ─────────────────────────────────────────────────────────────────
+//  Live telemetry globals (read by web /status endpoint)
+// ─────────────────────────────────────────────────────────────────
+float    theta       = 0.0f;
+float    gyro_rate   = 0.0f;
+float    gyro_raw    = 0.0f;   // raw (un-biased) gyro reading
+float    integral    = 0.0f;   // PID integral — global so calibration can reset it
+bool     imuOk       = true;
+uint32_t imuErrCount = 0;
+uint32_t lastCalibMs = 0;
+
+// ─────────────────────────────────────────────────────────────────
+//  Web tuner
+// ─────────────────────────────────────────────────────────────────
+WebServer server(80);
+
+static const char HTML[] PROGMEM = R"html(
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BalanceBot Tuner</title>
+<style>
+body{font-family:monospace;max-width:560px;margin:20px auto;padding:0 14px;background:#111;color:#ddd}
+h2{color:#4af;margin:0 0 12px}
+.card{background:#1e1e1e;border-radius:8px;padding:14px 16px;margin:10px 0}
+.card b{color:#4af;font-size:13px;letter-spacing:.05em}
+.row{display:flex;align-items:center;margin:9px 0;gap:10px}
+label{width:72px;font-size:13px;color:#999}
+input[type=range]{flex:1;accent-color:#4af}
+.val{width:64px;text-align:right;font-size:13px;color:#4af}
+.tele{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin-top:8px;font-size:13px}
+.tele .k{color:#777}
+.tele .v{color:#4af}
+.dpad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,58px);gap:6px;justify-content:center;margin:10px 0}
+.dbtn{background:#1a1a2e;border:2px solid #333;border-radius:8px;color:#4af;font-size:22px;cursor:pointer;width:58px;height:58px;touch-action:none;user-select:none;-webkit-user-select:none}
+.dbtn:active{background:#4af;color:#111;border-color:#4af}
+.dbtn.stop{color:#f55;border-color:#555}
+.dbtn.stop:active{background:#f55;color:#111;border-color:#f55}
+.cbtn{width:100%;margin-top:10px;padding:9px;background:#1a1a2e;border:1px solid #4af;border-radius:6px;color:#4af;font-family:monospace;font-size:13px;cursor:pointer}
+.cbtn:active{background:#4af;color:#111}
+.cbtn:disabled{opacity:.5;cursor:default}
+</style></head><body>
+<h2>BalanceBot Tuner</h2>
+<div class="card">
+  <b>TELEMETRY</b>
+  <div class="tele">
+    <div><span class="k">meas θ </span><span class="v" id="t_th">—</span></div>
+    <div><span class="k">want θ </span><span class="v" id="t_st">—</span></div>
+    <div><span class="k">gyro   </span><span class="v" id="t_gy">—</span></div>
+    <div><span class="k">error  </span><span class="v" id="t_er">—</span></div>
+    <div><span class="k">motor  </span><span class="v" id="t_sp">—</span></div>
+  </div>
+</div>
+<div class="card">
+  <b>SYSTEM</b>
+  <div class="tele">
+    <div><span class="k">IMU </span><span class="v" id="s_imu">—</span></div>
+  </div>
+</div>
+<div class="card"><b>PID GAINS</b>
+  <div class="row"><label>Kp</label><input type="range" id="kp" min="0" max="5000" step="10" oninput="send('kp',this.value)"><span class="val" id="kp_v">—</span></div>
+  <div class="row"><label>Kd</label><input type="range" id="kd" min="0" max="1000" step="1"  oninput="send('kd',this.value)"><span class="val" id="kd_v">—</span></div>
+  <div class="row"><label>Ki</label><input type="range" id="ki" min="0" max="20"   step="0.1" oninput="send('ki',this.value)"><span class="val" id="ki_v">—</span></div>
+</div>
+<div class="card"><b>MOTOR</b>
+  <div class="row"><label>Accel</label><input type="range" id="ac" min="10" max="3000" step="10" oninput="send('ac',this.value)"><span class="val" id="ac_v">—</span></div>
+  <div class="row"><label>Max spd</label><input type="range" id="mw" min="1" max="40" step="0.5" oninput="send('mw',this.value)"><span class="val" id="mw_v">—</span></div>
+  <div class="row"><label>CF coeff</label><input type="range" id="cf" min="0.9" max="0.999" step="0.001" oninput="send('cf',this.value)"><span class="val" id="cf_v">—</span></div>
+</div>
+<div class="card"><b>BALANCE</b>
+  <div class="row"><label>Setpoint</label><input type="range" id="sp" min="-0.3" max="0.3" step="0.001" oninput="send('sp',this.value)"><span class="val" id="sp_v">—</span></div>
+  <button class="cbtn" id="cal_btn" onclick="doCalibrate()">Calibrate Gyro &amp; Balance Angle</button>
+</div>
+<div class="card"><b>DRIVE</b>
+  <div class="dpad">
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('w')" onpointerup="stopMove('w')" onpointerleave="stopMove('w')">&#9650;</button>
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('a')" onpointerup="stopMove('a')" onpointerleave="stopMove('a')">&#9664;</button>
+    <button class="dbtn stop" onpointerdown="sendMove('stop')">&#9632;</button>
+    <button class="dbtn" onpointerdown="startMove('d')" onpointerup="stopMove('d')" onpointerleave="stopMove('d')">&#9654;</button>
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('s')" onpointerup="stopMove('s')" onpointerleave="stopMove('s')">&#9660;</button>
+    <div></div>
+  </div>
+</div>
+<script>
+function send(p,v){
+  var dp=(p==='sp'||p==='ki')?4:(p==='cf'?3:1);
+  document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
+  fetch('/set?'+p+'='+v);
+}
+var inited=false;
+function poll(){
+  fetch('/status').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('t_th').textContent=d.theta.toFixed(4)+' rad';
+    document.getElementById('t_st').textContent=d.setpt.toFixed(4)+' rad';
+    document.getElementById('t_gy').textContent=d.gyro.toFixed(3);
+    document.getElementById('t_er').textContent=d.err.toFixed(4);
+    document.getElementById('t_sp').textContent=d.spd.toFixed(2);
+    var imuEl=document.getElementById('s_imu');
+    imuEl.textContent=d.imu_ok?'OK':'ERROR';
+    imuEl.style.color=d.imu_ok?'#4f4':'#f44';
+    if(!inited){inited=true;
+      ['kp','kd','ki','ac','mw','cf','sp'].forEach(function(p){
+        document.getElementById(p).value=d[p];
+        var dp=(p==='sp'||p==='ki')?4:(p==='cf'?3:1);
+        document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
+      });
+    }
+  }).catch(function(){});
+}
+var moveIv=null;
+function startMove(dir){
+  if(moveIv)clearInterval(moveIv);
+  sendMove(dir);
+  moveIv=setInterval(function(){sendMove(dir);},120);
+}
+function stopMove(dir){
+  clearInterval(moveIv);moveIv=null;
+  sendMove(dir==='w'||dir==='s'?'stop_fb':'stop_turn');
+}
+function sendMove(dir){fetch('/move?dir='+dir).catch(function(){});}
+function doCalibrate(){
+  var b=document.getElementById('cal_btn');
+  b.textContent='Calibrating…';b.disabled=true;
+  fetch('/calibrate').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('sp').value=d.sp;
+    document.getElementById('sp_v').textContent=parseFloat(d.sp).toFixed(4);
+    b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  }).catch(function(){
+    b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  });
+}
+setInterval(poll,250);poll();
+</script></body></html>
+)html";
 
 // ─────────────────────────────────────────────────────────────────
 //  Objects
@@ -336,48 +215,7 @@ bool IRAM_ATTR TimerHandler(void*)
 // ─────────────────────────────────────────────────────────────────
 //  Print theoretical gain calculations at startup
 // ─────────────────────────────────────────────────────────────────
-void printTheory()
-{
-    float unstable_pole = sqrtf(G_ACCEL / L_COM);
-    float kd_min        = L_COM / WHEEL_RADIUS;
-    float kd_theory     = (G_ACCEL / (OMEGA_N * OMEGA_N) + L_COM) / WHEEL_RADIUS;
-    float kp_theory     = (2.0f * ZETA * G_ACCEL) / (WHEEL_RADIUS * OMEGA_N);
-    float omega_n_check = sqrtf(G_ACCEL / (WHEEL_RADIUS * Kd - L_COM));
-    float zeta_check    = (WHEEL_RADIUS * Kp) /
-                          (2.0f * sqrtf((WHEEL_RADIUS * Kd - L_COM) * G_ACCEL));
 
-    Serial.println("═══════════════════════════════════");
-    Serial.println("  INNER LOOP THEORETICAL ANALYSIS  ");
-    Serial.println("═══════════════════════════════════");
-    Serial.printf("  r = %.4f m,  l = %.4f m\n", WHEEL_RADIUS, L_COM);
-    Serial.printf("  Unstable pole  p  = √(g/l) = %.2f rad/s\n", unstable_pole);
-    Serial.printf("  Stability cond Kd > l/r    = %.2f\n", kd_min);
-    Serial.println("───────────────────────────────────");
-    Serial.printf("  Target ωn = %.1f rad/s  (%.1fx pole)\n",
-                  OMEGA_N, OMEGA_N / unstable_pole);
-    Serial.printf("  Target ζ  = %.2f\n", ZETA);
-    Serial.println("───────────────────────────────────");
-    Serial.printf("  Kp theory = %.2f   →  loaded: %.2f\n", kp_theory, Kp);
-    Serial.printf("  Kd theory = %.2f   →  loaded: %.2f\n", kd_theory, Kd);
-    Serial.println("───────────────────────────────────");
-    Serial.printf("  Actual ωn  = %.2f rad/s\n", omega_n_check);
-    Serial.printf("  Actual ζ   = %.3f\n", zeta_check);
-    Serial.printf("  Max wheel speed = 19.6 rad/s\n");
-    Serial.println("═══════════════════════════════════");
-    Serial.println("Serial commands:");
-    Serial.println("  kp <val>  — set Kp");
-    Serial.println("  kd <val>  — set Kd");
-    Serial.println("  ki <val>  — set Ki");
-    Serial.println("  sp <val>  — set balance setpoint (rad)");
-    Serial.println("  en 0      — disable motors");
-    Serial.println("  en 1      — enable motors");
-    Serial.println("  info      — reprint this table");
-    Serial.println("═══════════════════════════════════\n");
-}
-
-// ─────────────────────────────────────────────────────────────────
-//  Setup
-// ─────────────────────────────────────────────────────────────────
 void setup()
 {
     Serial.begin(115200);
@@ -396,15 +234,14 @@ void setup()
     mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);
-    // 21 Hz hardware filter: removes stepper vibration noise above
-    // ~21 Hz while preserving the balance control bandwidth (≤40 rad/s ≈ 6 Hz)
+    
 
     // Set acceleration high so the slew-rate limiter in the step
     // library does NOT restrict the PID. The PID sets target speed;
     // the library ramps to it. At 1000 rad/s², it reaches 19.6 rad/s
     // in ~20 ms — fast enough not to impede control.
-    step1.setAccelerationRad(30.0f);
-    step2.setAccelerationRad(30.0f);
+    step1.setAccelerationRad(motorAccel);
+    step2.setAccelerationRad(motorAccel);
 
     if (!ITimer.attachInterruptInterval(STEPPER_INTERVAL_US, TimerHandler)) {
         Serial.println("Stepper ISR attach failed");
@@ -414,21 +251,100 @@ void setup()
     // ── Gyro bias calibration ─────────────────────────────────────
     // Average 200 readings at 5 ms intervals (1 second total).
     // Robot must be stationary during this window.
-    Serial.println("Calibrating gyro — keep robot still for 1 second...");
-    {
-        float sum = 0.0f;
+    // ── WiFi Access Point ─────────────────────────────────────────
+    WiFi.softAP("BalanceBot", "balance123");
+    Serial.printf("Web tuner: connect to WiFi 'BalanceBot' then open http://%s\n",
+                  WiFi.softAPIP().toString().c_str());
+
+    server.on("/", [](){
+        server.send_P(200, "text/html", HTML);
+    });
+    server.on("/set", [](){
+        if (server.hasArg("kp")) Kp            = server.arg("kp").toFloat();
+        if (server.hasArg("kd")) Kd            = server.arg("kd").toFloat();
+        if (server.hasArg("ki")) Ki            = server.arg("ki").toFloat();
+        if (server.hasArg("sp")) BALANCE_ANGLE = server.arg("sp").toFloat();
+        if (server.hasArg("mw")) maxWheelSpeed = server.arg("mw").toFloat();
+        if (server.hasArg("cf")) CF_COEFF      = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
+        if (server.hasArg("ac")) {
+            motorAccel = server.arg("ac").toFloat();
+            step1.setAccelerationRad(motorAccel);
+            step2.setAccelerationRad(motorAccel);
+        }
+        server.send(200, "application/json", "{\"ok\":true}");
+    });
+    server.on("/move", [](){
+        String dir = server.arg("dir");
+        if      (dir == "w")         leanCommand = constrain(leanCommand + MOVE_STEP, -MAX_TILT_OFFSET, MAX_TILT_OFFSET);
+        else if (dir == "s")         leanCommand = constrain(leanCommand - MOVE_STEP, -MAX_TILT_OFFSET, MAX_TILT_OFFSET);
+        else if (dir == "a")         turnBias    = constrain(turnBias    - TURN_STEP,  -MAX_TURN_BIAS,   MAX_TURN_BIAS);
+        else if (dir == "d")         turnBias    = constrain(turnBias    + TURN_STEP,  -MAX_TURN_BIAS,   MAX_TURN_BIAS);
+        else if (dir == "stop")    { leanCommand = 0.0f; turnBias = 0.0f; }
+        else if (dir == "stop_fb")   leanCommand = 0.0f;
+        else if (dir == "stop_turn") turnBias    = 0.0f;
+        server.send(200, "application/json", "{\"ok\":true}");
+    });
+    server.on("/calibrate", [](){
+        step1.setTargetSpeedRad(0.0f);
+        step2.setTargetSpeedRad(0.0f);
+        leanCommand = 0.0f;
+        turnBias    = 0.0f;
+        integral    = 0.0f;
+        delay(300);  // let motors coast to stop before sampling
+        Serial.println("Web calibration — hold robot upright and still...");
+        float gyroSum  = 0.0f;
+        float accelSum = 0.0f;
         const int N = 200;
         for (int i = 0; i < N; i++) {
             sensors_event_t a, g, tmp;
             mpu.getEvent(&a, &g, &tmp);
-            sum += g.gyro.y;
+            gyroSum  += g.gyro.y;
+            accelSum += atan2f(a.acceleration.z, a.acceleration.x);
             delay(5);
         }
-        gyroBias = sum / N;
-        Serial.printf("Gyro bias measured: %.4f rad/s\n", gyroBias);
+        gyroBias      = gyroSum  / N;
+        BALANCE_ANGLE = accelSum / N;
+        lastCalibMs   = millis();
+        Serial.printf("Calibrated — bias=%.4f  balance=%.4f rad (%.2f deg)\n",
+                      gyroBias, BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "{\"ok\":true,\"sp\":%.4f}", BALANCE_ANGLE);
+        server.send(200, "application/json", buf);
+    });
+    server.on("/status", [](){
+        uint32_t upSec    = millis() / 1000;
+        uint32_t calSec   = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
+        char buf[384];
+        snprintf(buf, sizeof(buf),
+            "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
+            "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
+            "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f}",
+            theta, BALANCE_ANGLE + leanCommand, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
+            Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
+            gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF);
+        server.send(200, "application/json", buf);
+    });
+    server.begin();
+
+    Serial.println("Calibrating — hold robot upright and still for 1 second...");
+    {
+        float gyroSum  = 0.0f;
+        float accelSum = 0.0f;
+        const int N = 200;
+        for (int i = 0; i < N; i++) {
+            sensors_event_t a, g, tmp;
+            mpu.getEvent(&a, &g, &tmp);
+            gyroSum  += g.gyro.y;
+            accelSum += atan2f(a.acceleration.z, a.acceleration.x);
+            delay(5);
+        }
+        gyroBias     = gyroSum  / N;
+        BALANCE_ANGLE = accelSum / N;
+        Serial.printf("Gyro bias:     %.4f rad/s\n", gyroBias);
+        Serial.printf("Balance angle: %.4f rad (%.2f deg)\n",
+                      BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
     }
 
-    printTheory();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -439,31 +355,43 @@ void loop()
     static unsigned long loopTimer  = 0;
     static unsigned long printTimer = 0;
     static unsigned long lastLoopUs = 0;
-    static float theta     = 0.0f;
-    static float integral  = 0.0f;
-    static float gyro_rate = 0.0f;  // retained for diagnostics
+
+    server.handleClient();
 
     // ── Serial command parser ──────────────────────────────────────
     if (Serial.available()) {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        if      (cmd.startsWith("kp"))   Kp = cmd.substring(3).toFloat();
-        else if (cmd.startsWith("kd"))   Kd = cmd.substring(3).toFloat();
-        else if (cmd.startsWith("ki"))   Ki = cmd.substring(3).toFloat();
-        else if (cmd.startsWith("sp"))   BALANCE_ANGLE = cmd.substring(3).toFloat();
-        else if (cmd == "en 0")          { digitalWrite(STEPPER_EN_PIN, HIGH); Serial.println("Motors DISABLED"); return; }
-        else if (cmd == "en 1")          { digitalWrite(STEPPER_EN_PIN, LOW);  Serial.println("Motors ENABLED");  return; }
-        else if (cmd == "info")          { printTheory(); return; }
+        char peek = (char)Serial.peek();
 
-        // Print updated actual ωn and ζ after any gain change
-        float rKd_l = WHEEL_RADIUS * Kd - L_COM;
-        if (rKd_l > 0) {
-            float wn = sqrtf((G_ACCEL + WHEEL_RADIUS * Ki) / rKd_l);
-            float z  = (WHEEL_RADIUS * Kp) / (2.0f * sqrtf(rKd_l * (G_ACCEL + WHEEL_RADIUS * Ki)));
-            Serial.printf("Kp=%.2f  Kd=%.2f  Ki=%.3f  sp=%.4f  |  ωn=%.2f  ζ=%.3f\n",
-                          Kp, Kd, Ki, BALANCE_ANGLE, wn, z);
+        // Single-character WASD commands — no Enter needed
+        if (peek=='w'||peek=='W'||peek=='s'||peek=='S'||
+            peek=='a'||peek=='A'||peek=='d'||peek=='D'||peek==' ') {
+            Serial.read();  // consume
+            switch (tolower(peek)) {
+                case 'w': leanCommand = constrain(leanCommand + MOVE_STEP, -MAX_TILT_OFFSET, MAX_TILT_OFFSET); break;
+                case 's': leanCommand = constrain(leanCommand - MOVE_STEP, -MAX_TILT_OFFSET, MAX_TILT_OFFSET); break;
+                case 'a': turnBias    = constrain(turnBias    - TURN_STEP,  -MAX_TURN_BIAS,  MAX_TURN_BIAS);   break;
+                case 'd': turnBias    = constrain(turnBias    + TURN_STEP,  -MAX_TURN_BIAS,  MAX_TURN_BIAS);   break;
+                case ' ': leanCommand = 0.0f; turnBias = 0.0f; break;
+            }
+            Serial.printf("MOVE  lean=%.4f  turn=%.2f\n", leanCommand, turnBias);
         } else {
-            Serial.println("WARNING: Kd < l/r — system UNSTABLE. Increase Kd.");
+            String cmd = Serial.readStringUntil('\n');
+            cmd.trim();
+            if      (cmd.startsWith("kp"))   Kp            = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("kd"))   Kd            = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("ki"))   Ki            = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("sp"))   BALANCE_ANGLE = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("ac")) { motorAccel    = cmd.substring(3).toFloat();
+                                             step1.setAccelerationRad(motorAccel);
+                                             step2.setAccelerationRad(motorAccel); }
+            else if (cmd.startsWith("mw"))   maxWheelSpeed = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("mv"))   leanCommand   = constrain(cmd.substring(3).toFloat(), -MAX_TILT_OFFSET, MAX_TILT_OFFSET);
+            else if (cmd.startsWith("tr"))   turnBias      = constrain(cmd.substring(3).toFloat(), -MAX_TURN_BIAS,   MAX_TURN_BIAS);
+            else if (cmd == "en 0")          { digitalWrite(STEPPER_EN_PIN, HIGH); Serial.println("Motors DISABLED"); return; }
+            else if (cmd == "en 1")          { digitalWrite(STEPPER_EN_PIN, LOW);  Serial.println("Motors ENABLED");  return; }
+
+            Serial.printf("Kp=%.1f  Kd=%.1f  Ki=%.3f  sp=%.4f  ac=%.1f  mw=%.1f\n",
+                          Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed);
         }
     }
 
@@ -482,7 +410,8 @@ void loop()
             ok = mpu.getEvent(&a, &g, &tmp);
             if (!ok) { Wire.begin(21, 22); Wire.setClock(100000); delayMicroseconds(100); }
         }
-        if (!ok) return;  // skip this iteration rather than use stale data
+        if (!ok) { imuOk = false; imuErrCount++; return; }
+        imuOk = true;
 
         // 2. Complementary filter
         //
@@ -498,6 +427,7 @@ void loop()
         //    above fc → gyro dominates (dynamic accuracy)
         //
         float accel_angle = atan2f(a.acceleration.z, a.acceleration.x);
+        gyro_raw          = g.gyro.y;
         gyro_rate         = g.gyro.y - gyroBias;  // bias-corrected pitch rate
 
         theta = (1.0f - CF_COEFF) * accel_angle
@@ -511,7 +441,10 @@ void loop()
             return;
         }
 
-        // 4. PID
+        // 4. Tilt setpoint — direct lean command, no wheel speed feedback
+        float tiltSetpoint = BALANCE_ANGLE + leanCommand;
+
+        // 5. PID
         //
         //    error = setpoint − θ
         //
@@ -526,7 +459,7 @@ void loop()
         //    d(error)/dt = d(setpoint−θ)/dt ≈ −θ̇ = −gyro_rate
         //    This avoids numerical differentiation noise entirely.
         //
-        float error = BALANCE_ANGLE - theta;
+        float error = tiltSetpoint - theta;
 
         integral += error * dt;
         integral  = constrain(integral, -MAX_INTEGRAL, MAX_INTEGRAL);  // anti-windup
@@ -541,27 +474,22 @@ void loop()
         // Beyond 19.6 rad/s the stepper driver simply won't go faster.
         // Clamping here keeps the integral from winding up against a
         // limit the motor cannot achieve.
-        output = constrain(output, -MAX_WHEEL_SPEED, MAX_WHEEL_SPEED);
+        output = constrain(output, -maxWheelSpeed, maxWheelSpeed);
 
-        // 5. Drive motors
-        //    Motor 2 is mounted mirrored → opposite sign
-        step1.setTargetSpeedRad( output);
-        step2.setTargetSpeedRad(-output);
+        // 6. Drive motors
+        //    Motor 2 is mounted mirrored → opposite sign.
+        //    turnBias added to both: because step2 is already inverted,
+        //    this creates a differential that turns the robot.
+        step1.setTargetSpeedRad( output + turnBias);
+        step2.setTargetSpeedRad(-output + turnBias);
     }
 
     // ── Diagnostics at 2 Hz ───────────────────────────────────────
     if (millis() - printTimer >= PRINT_INTERVAL_MS) {
         printTimer += PRINT_INTERVAL_MS;
-
-        float rKd_l = WHEEL_RADIUS * Kd - L_COM;
-        float wn    = (rKd_l > 0) ? sqrtf((G_ACCEL + WHEEL_RADIUS * Ki) / rKd_l) : -1.0f;
-        float zeta  = (rKd_l > 0)
-                    ? (WHEEL_RADIUS * Kp) / (2.0f * sqrtf(rKd_l * (G_ACCEL + WHEEL_RADIUS * Ki)))
-                    : -1.0f;
-
-        Serial.printf("theta=%.4f  gyro=%.3f  err=%.4f  "
-                      "ω1=%.2f  Kp=%.1f  Kd=%.1f  Ki=%.3f  ωn=%.2f  ζ=%.3f  sp=%.4f\n",
+        Serial.printf("theta=%.4f  gyro=%.3f  err=%.4f  w1=%.2f  "
+                      "Kp=%.1f  Kd=%.1f  Ki=%.3f  ac=%.1f  mw=%.1f  sp=%.4f\n",
                       theta, gyro_rate, BALANCE_ANGLE - theta,
-                      step1.getSpeedRad(), Kp, Kd, Ki, wn, zeta, BALANCE_ANGLE);
+                      step1.getSpeedRad(), Kp, Kd, Ki, motorAccel, maxWheelSpeed, BALANCE_ANGLE);
     }
 }
