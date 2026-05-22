@@ -1,0 +1,138 @@
+#pragma once
+#include <pgmspace.h>
+
+static const char HTML[] PROGMEM = R"html(
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BalanceBot Tuner</title>
+<style>
+body{font-family:monospace;max-width:560px;margin:20px auto;padding:0 14px;background:#111;color:#ddd}
+h2{color:#4af;margin:0 0 12px}
+.card{background:#1e1e1e;border-radius:8px;padding:14px 16px;margin:10px 0}
+.card b{color:#4af;font-size:13px;letter-spacing:.05em}
+.row{display:flex;align-items:center;margin:9px 0;gap:10px}
+label{width:72px;font-size:13px;color:#999}
+input[type=range]{flex:1;accent-color:#4af}
+.val{width:64px;text-align:right;font-size:13px;color:#4af}
+.tele{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin-top:8px;font-size:13px}
+.tele .k{color:#777}
+.tele .v{color:#4af}
+.dpad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,58px);gap:6px;justify-content:center;margin:10px 0}
+.dbtn{background:#1a1a2e;border:2px solid #333;border-radius:8px;color:#4af;font-size:22px;cursor:pointer;width:58px;height:58px;touch-action:none;user-select:none;-webkit-user-select:none}
+.dbtn:active{background:#4af;color:#111;border-color:#4af}
+.dbtn.stop{color:#f55;border-color:#555}
+.dbtn.stop:active{background:#f55;color:#111;border-color:#f55}
+.cbtn{width:100%;margin-top:10px;padding:9px;background:#1a1a2e;border:1px solid #4af;border-radius:6px;color:#4af;font-family:monospace;font-size:13px;cursor:pointer}
+.cbtn:active{background:#4af;color:#111}
+.cbtn:disabled{opacity:.5;cursor:default}
+</style></head><body>
+<h2>BalanceBot Tuner</h2>
+<div class="card">
+  <b>TELEMETRY</b>
+  <div class="tele">
+    <div><span class="k">meas θ </span><span class="v" id="t_th">—</span></div>
+    <div><span class="k">want θ </span><span class="v" id="t_st">—</span></div>
+    <div><span class="k">gyro   </span><span class="v" id="t_gy">—</span></div>
+    <div><span class="k">error  </span><span class="v" id="t_er">—</span></div>
+    <div><span class="k">motor  </span><span class="v" id="t_sp">—</span></div>
+    <div><span class="k">tiltSP </span><span class="v" id="t_ts">—</span></div>
+    <div><span class="k">posEst </span><span class="v" id="t_pe">—</span></div>
+    <div><span class="k">posTgt </span><span class="v" id="t_pt">—</span></div>
+    <div><span class="k">vel    </span><span class="v" id="t_ve">—</span></div>
+  </div>
+</div>
+<div class="card">
+  <b>SYSTEM</b>
+  <div class="tele">
+    <div><span class="k">IMU </span><span class="v" id="s_imu">—</span></div>
+  </div>
+</div>
+<div class="card"><b>PID GAINS</b>
+  <div class="row"><label>Kp</label><input type="range" id="kp" min="0" max="5000" step="10"     oninput="send('kp',this.value)"><span class="val" id="kp_v">—</span></div>
+  <div class="row"><label>Kd</label><input type="range" id="kd" min="0" max="1000" step="1"      oninput="send('kd',this.value)"><span class="val" id="kd_v">—</span></div>
+  <div class="row"><label>Ki</label><input type="range" id="ki" min="0" max="20"   step="0.1"    oninput="send('ki',this.value)"><span class="val" id="ki_v">—</span></div>
+</div>
+<div class="card"><b>MOTOR</b>
+  <div class="row"><label>Accel</label><input type="range" id="ac" min="10" max="3000" step="10" oninput="send('ac',this.value)"><span class="val" id="ac_v">—</span></div>
+  <div class="row"><label>Max spd</label><input type="range" id="mw" min="1" max="40" step="0.5" oninput="send('mw',this.value)"><span class="val" id="mw_v">—</span></div>
+  <div class="row"><label>CF coeff</label><input type="range" id="cf" min="0.9" max="0.999" step="0.001" oninput="send('cf',this.value)"><span class="val" id="cf_v">—</span></div>
+</div>
+<div class="card"><b>BALANCE</b>
+  <div class="row"><label>Setpoint</label><input type="range" id="sp" min="-0.3" max="0.3" step="0.001" oninput="send('sp',this.value)"><span class="val" id="sp_v">—</span></div>
+  <button class="cbtn" id="cal_btn" onclick="doCalibrate()">Calibrate Gyro &amp; Balance Angle</button>
+</div>
+<div class="card"><b>DRIVE</b>
+  <div class="row"><label>Kp pos</label><input type="range" id="kpp" min="0" max="0.02" step="0.0005" oninput="send('kpp',this.value)"> <span class="val" id="kpp_v">—</span></div>
+  <div class="row"><label>Kd pos</label><input type="range" id="kdp" min="0" max="0.05" step="0.0005" oninput="send('kdp',this.value)"> <span class="val" id="kdp_v">—</span></div>
+  <div class="row"><label>Max tiltSP</label><input type="range" id="mts" min="0.005" max="0.1" step="0.005" oninput="send('mts',this.value)"> <span class="val" id="mts_v">—</span></div>
+  <div class="row"><label>Pos step</label><input type="range" id="ps" min="0.5" max="10" step="0.5" oninput="send('ps',this.value)"> <span class="val" id="ps_v">—</span></div>
+  <div class="row"><label>Turn step</label><input type="range" id="trns" min="0.5"   max="10"    step="0.5"   oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
+  <div class="row"><label>Max turn</label><input type="range" id="mtb"  min="1"     max="20"    step="0.5"   oninput="send('mtb',this.value)"> <span class="val" id="mtb_v">—</span></div>
+  <div class="dpad">
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('w')" onpointerup="stopMove('w')" onpointerleave="stopMove('w')">&#9650;</button>
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('a')" onpointerup="stopMove('a')" onpointerleave="stopMove('a')">&#9664;</button>
+    <button class="dbtn stop" onpointerdown="sendMove('stop')">&#9632;</button>
+    <button class="dbtn" onpointerdown="startMove('d')" onpointerup="stopMove('d')" onpointerleave="stopMove('d')">&#9654;</button>
+    <div></div>
+    <button class="dbtn" onpointerdown="startMove('s')" onpointerup="stopMove('s')" onpointerleave="stopMove('s')">&#9660;</button>
+    <div></div>
+  </div>
+</div>
+<script>
+function send(p,v){
+  var dp=(p==='sp'||p==='ki'||p==='kpp'||p==='kdp')?4:(p==='cf'||p==='mts')?3:1;
+  document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
+  fetch('/set?'+p+'='+v);
+}
+var inited=false;
+function poll(){
+  fetch('/status').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('t_th').textContent=d.theta.toFixed(4)+' rad';
+    document.getElementById('t_st').textContent=d.setpt.toFixed(4)+' rad';
+    document.getElementById('t_gy').textContent=d.gyro.toFixed(3);
+    document.getElementById('t_er').textContent=d.err.toFixed(4);
+    document.getElementById('t_sp').textContent=d.spd.toFixed(2);
+    document.getElementById('t_ts').textContent=d.tiltSP.toFixed(4)+' rad';
+    document.getElementById('t_pe').textContent=d.posEst.toFixed(3)+' r';
+    document.getElementById('t_pt').textContent=d.posTarget.toFixed(3)+' r';
+    document.getElementById('t_ve').textContent=d.velEst.toFixed(3)+' r/s';
+    var imuEl=document.getElementById('s_imu');
+    imuEl.textContent=d.imu_ok?'OK':'ERROR';
+    imuEl.style.color=d.imu_ok?'#4f4':'#f44';
+    if(!inited){inited=true;
+      ['kp','kd','ki','ac','mw','cf','sp','kpp','kdp','mts','ps','trns','mtb'].forEach(function(p){
+        document.getElementById(p).value=d[p];
+        var dp=(p==='sp'||p==='ki'||p==='kpp'||p==='kdp')?4:(p==='cf'||p==='mts')?3:1;
+        document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
+      });
+    }
+  }).catch(function(){});
+}
+var moveIv=null;
+function startMove(dir){
+  if(moveIv)clearInterval(moveIv);
+  sendMove(dir);
+  moveIv=setInterval(function(){sendMove(dir);},120);
+}
+function stopMove(dir){
+  clearInterval(moveIv);moveIv=null;
+  if(dir==='a'||dir==='d') sendMove('stop_turn');
+  else sendMove('stop_fb');
+}
+function sendMove(dir){fetch('/move?dir='+dir).catch(function(){});}
+function doCalibrate(){
+  var b=document.getElementById('cal_btn');
+  b.textContent='Calibrating…';b.disabled=true;
+  fetch('/calibrate').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('sp').value=d.sp;
+    document.getElementById('sp_v').textContent=parseFloat(d.sp).toFixed(4);
+    b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  }).catch(function(){
+    b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  });
+}
+setInterval(poll,250);poll();
+</script></body></html>
+)html";
