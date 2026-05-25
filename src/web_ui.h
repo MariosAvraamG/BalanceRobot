@@ -36,9 +36,9 @@ input[type=range]{flex:1;accent-color:#4af}
     <div><span class="k">error  </span><span class="v" id="t_er">—</span></div>
     <div><span class="k">motor  </span><span class="v" id="t_sp">—</span></div>
     <div><span class="k">tiltSP </span><span class="v" id="t_ts">—</span></div>
-    <div><span class="k">posEst </span><span class="v" id="t_pe">—</span></div>
-    <div><span class="k">posTgt </span><span class="v" id="t_pt">—</span></div>
-    <div><span class="k">vel    </span><span class="v" id="t_ve">—</span></div>
+    <div><span class="k">velEst </span><span class="v" id="t_ve">—</span></div>
+    <div><span class="k">velTgt </span><span class="v" id="t_vt">—</span></div>
+    <div><span class="k">vInteg </span><span class="v" id="t_vi">—</span></div>
   </div>
 </div>
 <div class="card">
@@ -62,10 +62,12 @@ input[type=range]{flex:1;accent-color:#4af}
   <button class="cbtn" id="cal_btn" onclick="doCalibrate()">Calibrate Gyro &amp; Balance Angle</button>
 </div>
 <div class="card"><b>DRIVE</b>
-  <div class="row"><label>Kp pos</label><input type="range" id="kpp" min="0" max="0.02" step="0.0005" oninput="send('kpp',this.value)"> <span class="val" id="kpp_v">—</span></div>
-  <div class="row"><label>Kd pos</label><input type="range" id="kdp" min="0" max="0.05" step="0.0005" oninput="send('kdp',this.value)"> <span class="val" id="kdp_v">—</span></div>
+  <div class="row"><label>Kp vel</label><input type="range" id="kpv" min="0" max="0.05" step="0.001" oninput="send('kpv',this.value)"> <span class="val" id="kpv_v">—</span></div>
+  <div class="row"><label>Ki vel</label><input type="range" id="kvi" min="0" max="0.01" step="0.0001" oninput="send('kvi',this.value)"> <span class="val" id="kvi_v">—</span></div>
   <div class="row"><label>Max tiltSP</label><input type="range" id="mts" min="0.005" max="0.1" step="0.005" oninput="send('mts',this.value)"> <span class="val" id="mts_v">—</span></div>
-  <div class="row"><label>Pos step</label><input type="range" id="ps" min="0.5" max="10" step="0.5" oninput="send('ps',this.value)"> <span class="val" id="ps_v">—</span></div>
+  <div class="row"><label>Vel step</label><input type="range" id="vs" min="0.1" max="5" step="0.1" oninput="send('vs',this.value)"> <span class="val" id="vs_v">—</span></div>
+  <div class="row"><label>Max vel</label><input type="range" id="mvt" min="1" max="15" step="0.5" oninput="send('mvt',this.value)"> <span class="val" id="mvt_v">—</span></div>
+  <div class="row"><label>EMA α</label><input type="range" id="ema" min="0.01" max="1" step="0.01" oninput="send('ema',this.value)"> <span class="val" id="ema_v">—</span></div>
   <div class="row"><label>Turn step</label><input type="range" id="trns" min="0.5"   max="10"    step="0.5"   oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
   <div class="row"><label>Max turn</label><input type="range" id="mtb"  min="1"     max="20"    step="0.5"   oninput="send('mtb',this.value)"> <span class="val" id="mtb_v">—</span></div>
   <div class="dpad">
@@ -82,7 +84,7 @@ input[type=range]{flex:1;accent-color:#4af}
 </div>
 <script>
 function send(p,v){
-  var dp=(p==='sp'||p==='ki'||p==='kpp'||p==='kdp')?4:(p==='cf'||p==='mts')?3:1;
+  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts')?3:(p==='ema')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
@@ -95,16 +97,16 @@ function poll(){
     document.getElementById('t_er').textContent=d.err.toFixed(4);
     document.getElementById('t_sp').textContent=d.spd.toFixed(2);
     document.getElementById('t_ts').textContent=d.tiltSP.toFixed(4)+' rad';
-    document.getElementById('t_pe').textContent=d.posEst.toFixed(3)+' r';
-    document.getElementById('t_pt').textContent=d.posTarget.toFixed(3)+' r';
     document.getElementById('t_ve').textContent=d.velEst.toFixed(3)+' r/s';
+    document.getElementById('t_vt').textContent=d.velTarget.toFixed(3)+' r/s';
+    document.getElementById('t_vi').textContent=(d.vint||0).toFixed(4);
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','mw','cf','sp','kpp','kdp','mts','ps','trns','mtb'].forEach(function(p){
+      ['kp','kd','ki','ac','mw','cf','sp','kpv','kvi','mts','vs','mvt','ema','trns','mtb'].forEach(function(p){
         document.getElementById(p).value=d[p];
-        var dp=(p==='sp'||p==='ki'||p==='kpp'||p==='kdp')?4:(p==='cf'||p==='mts')?3:1;
+        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts')?3:(p==='ema')?2:1;
         document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
       });
     }

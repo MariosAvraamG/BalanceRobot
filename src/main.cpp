@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <SPI.h>
@@ -24,24 +23,25 @@ const float MAX_INTEGRAL     = 0.1f;   // anti-windup clamp
 const float FALL_ANGLE       = 0.8f;   // rad (~46°) — give up balancing
 
 
-float POS_STEP        = 3.0f;    // wheel-rad per button press
-float MAX_TILT_SP     = 0.025f;  // outer loop output clamp (rad) — keep tight
-float Kp_pos          = 0.003f;  // outer position loop proportional gain
-float Kd_pos          = 0.005f;  // outer position loop derivative gain
-float TURN_STEP       = 2.0f;    // rad/s added to turnBias per A/D press
-float MAX_TURN_BIAS   = 4.0f;    // rad/s — turnBias ceiling
+float MAX_TILT_SP    = 0.1f;  // outer loop output clamp (rad)
+float EMA_ALPHA      = 0.90f;    // velEst smoothing (0=frozen, 1=raw)
+float Kp_vel         = 0.005f;  // velocity P gain: velErr (rad/s) → tiltSP (rad)
+float Ki_vel         = 0.001f;  // velocity I gain
+float VEL_STEP       = 1.0f;    // rad/s per button press
+float MAX_VEL_TARGET = 15.0f;    // rad/s ceiling on velTarget
+float TURN_STEP      = 2.0f;    // rad/s added to turnBias per A/D press
+float MAX_TURN_BIAS  = 4.0f;    // rad/s — turnBias ceiling
 
-float posTarget  = 0.0f;   // commanded position (wheel-rad); updated by move commands
-float tiltSP     = 0.0f;   // outer loop output consumed by inner PID as setpoint offset (rad)
-float prevPosEst = 0.0f;   // previous posEst for velocity derivation — global so handlers can reset
-float turnBias   = 0.0f;   // differential speed for turning (rad/s); + = right
+float velTarget   = 0.0f;  // commanded velocity (rad/s)
+float velIntegral = 0.0f;  // velocity I accumulator
+float tiltSP      = 0.0f;  // outer loop output: lean offset fed to inner PID (rad)
+float turnBias    = 0.0f;  // differential speed for turning (rad/s); + = right
 
 
-const int   LOOP_INTERVAL_MS  = 5;           // ms
-const float LOOP_INTERVAL_S   = 0.005f;      // s  (nominal — actual dt measured per iteration)
-const int   STEPPER_INTERVAL_US = 50;        // µs — 20 kHz ISR
-const int   OUTER_INTERVAL_MS  = 50;         // ms — outer position loop (20 Hz)
-const int   PRINT_INTERVAL_MS = 2000;         // ms
+const int   LOOP_INTERVAL_MS    = 5;      // ms
+const float LOOP_INTERVAL_S     = 0.005f; // s
+const int   STEPPER_INTERVAL_US = 50;     // µs — 20 kHz ISR
+const int   PRINT_INTERVAL_MS   = 2000;   // ms
 
 // ─────────────────────────────────────────────────────────────────
 //  Pins
@@ -60,8 +60,7 @@ float    theta       = 0.0f;
 float    gyro_rate   = 0.0f;
 float    gyro_raw    = 0.0f;   // raw (un-biased) gyro reading
 float    integral    = 0.0f;   // PID integral — global so calibration can reset it
-float    posEst      = 0.0f;   // estimated position (wheel-rad) — updated by outer loop
-float    velEst      = 0.0f;   // estimated wheel speed (rad/s, position-derived) — updated by outer loop
+float    velEst      = 0.0f;   // EMA-filtered wheel speed (rad/s) from getSpeedRad()
 bool     imuOk       = true;
 uint32_t imuErrCount = 0;
 uint32_t lastCalibMs = 0;
@@ -168,12 +167,14 @@ void setup()
         if (server.hasArg("kd"))  Kd            = server.arg("kd").toFloat();
         if (server.hasArg("ki"))  Ki            = server.arg("ki").toFloat();
         if (server.hasArg("sp"))  BALANCE_ANGLE  = server.arg("sp").toFloat();
-        if (server.hasArg("kpp")) Kp_pos      = server.arg("kpp").toFloat();
-        if (server.hasArg("kdp")) Kd_pos      = server.arg("kdp").toFloat();
-        if (server.hasArg("mts")) MAX_TILT_SP = server.arg("mts").toFloat();
-        if (server.hasArg("ps"))  POS_STEP    = server.arg("ps").toFloat();
-        if (server.hasArg("trns")) TURN_STEP   = server.arg("trns").toFloat();
-        if (server.hasArg("mtb")) MAX_TURN_BIAS = server.arg("mtb").toFloat();
+        if (server.hasArg("kpv")) Kp_vel         = server.arg("kpv").toFloat();
+        if (server.hasArg("kvi")) Ki_vel         = server.arg("kvi").toFloat();
+        if (server.hasArg("mts")) MAX_TILT_SP    = server.arg("mts").toFloat();
+        if (server.hasArg("vs"))  VEL_STEP       = server.arg("vs").toFloat();
+        if (server.hasArg("mvt")) MAX_VEL_TARGET = server.arg("mvt").toFloat();
+        if (server.hasArg("ema")) EMA_ALPHA      = constrain(server.arg("ema").toFloat(), 0.01f, 1.0f);
+        if (server.hasArg("trns")) TURN_STEP     = server.arg("trns").toFloat();
+        if (server.hasArg("mtb")) MAX_TURN_BIAS  = server.arg("mtb").toFloat();
         if (server.hasArg("mw")) maxWheelSpeed = server.arg("mw").toFloat();
         if (server.hasArg("cf")) CF_COEFF      = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
         if (server.hasArg("ac")) {
@@ -185,12 +186,12 @@ void setup()
     });
     server.on("/move", [](){
         String dir = server.arg("dir");
-        if      (dir == "w")         posTarget += POS_STEP;
-        else if (dir == "s")         posTarget -= POS_STEP;
+        if      (dir == "w")         velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
+        else if (dir == "s")         velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
         else if (dir == "a")         turnBias  = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS);
         else if (dir == "d")         turnBias  = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS);
-        else if (dir == "stop")    { posEst = 0.5f*(step1.getPositionRad()-step2.getPositionRad()); posTarget = posEst; prevPosEst = posEst; tiltSP = 0.0f; integral = 0.0f; turnBias = 0.0f; }
-        else if (dir == "stop_fb") { posEst = 0.5f*(step1.getPositionRad()-step2.getPositionRad()); posTarget = posEst; prevPosEst = posEst; integral = 0.0f; }
+        else if (dir == "stop")    { velTarget = 0.0f; tiltSP = 0.0f; integral = 0.0f; turnBias = 0.0f; }
+        else if (dir == "stop_fb") { velTarget = 0.0f; integral = 0.0f; }
         else if (dir == "stop_turn") turnBias  = 0.0f;
         server.send(200, "application/json", "{\"ok\":true}");
     });
@@ -203,9 +204,9 @@ void setup()
         delay(300);  // let motors coast to stop before sampling
         Serial.println("Web calibration — hold robot upright and still...");
         calibrate();
-        posEst     = 0.5f*(step1.getPositionRad()-step2.getPositionRad());
-        posTarget  = posEst;
-        prevPosEst = posEst;
+        velTarget   = 0.0f;
+        velIntegral = 0.0f;
+        velEst      = 0.0f;
         char buf[64];
         snprintf(buf, sizeof(buf), "{\"ok\":true,\"sp\":%.4f}", BALANCE_ANGLE);
         server.send(200, "application/json", buf);
@@ -218,21 +219,25 @@ void setup()
             "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
             "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
             "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
-            "\"posEst\":%.3f,\"posTarget\":%.3f,\"velEst\":%.3f,\"tiltSP\":%.4f,"
-            "\"kpp\":%.4f,\"kdp\":%.4f,\"mts\":%.3f,\"ps\":%.2f,\"trns\":%.1f,\"mtb\":%.1f}",
+            "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
+            "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f}",
             theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
             Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
             gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
-            posEst, posTarget, velEst, tiltSP,
-            Kp_pos, Kd_pos, MAX_TILT_SP, POS_STEP, TURN_STEP, MAX_TURN_BIAS);
+            velEst, velTarget, tiltSP, velIntegral,
+            Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS);
         server.send(200, "application/json", buf);
     });
     server.begin();
+    xTaskCreatePinnedToCore(
+        [](void*){ for(;;){ server.handleClient(); vTaskDelay(1); } },
+        "web", 4096, nullptr, 1, nullptr, 0);
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
-    posTarget  = 0.0f;
-    prevPosEst = 0.0f;
+    velTarget   = 0.0f;
+    velIntegral = 0.0f;
+    velEst      = 0.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -244,8 +249,6 @@ void loop()
     static unsigned long printTimer = 0;
     static unsigned long lastLoopUs = 0;
 
-    server.handleClient();
-
     // ── Serial command parser ──────────────────────────────────────
     if (Serial.available()) {
         char peek = (char)Serial.peek();
@@ -255,35 +258,36 @@ void loop()
             peek=='a'||peek=='A'||peek=='d'||peek=='D'||peek==' ') {
             Serial.read();  // consume
             switch (tolower(peek)) {
-                case 'w': posTarget += POS_STEP; break;
-                case 's': posTarget -= POS_STEP; break;
+                case 'w': velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); break;
+                case 's': velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); break;
                 case 'a': turnBias = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); break;
                 case 'd': turnBias = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); break;
-                case ' ': { posEst = 0.5f*(step1.getPositionRad()-step2.getPositionRad()); posTarget = posEst; prevPosEst = posEst; tiltSP = 0.0f; turnBias = 0.0f; integral = 0.0f; } break;
+                case ' ': { velTarget = 0.0f; tiltSP = 0.0f; turnBias = 0.0f; integral = 0.0f; } break;
             }
-            Serial.printf("MOVE  posTarget=%.2f  posEst=%.2f  turn=%.2f\n", posTarget, posEst, turnBias);
+            Serial.printf("MOVE  velTarget=%.2f  velEst=%.2f  turn=%.2f\n", velTarget, velEst, turnBias);
         } else {
             String cmd = Serial.readStringUntil('\n');
             cmd.trim();
-            if      (cmd.startsWith("kpp"))  Kp_pos        = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("kdp"))  Kd_pos        = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("kp"))   Kp            = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("kd"))   Kd            = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("ki"))   Ki            = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("sp"))   BALANCE_ANGLE = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("ac")) { motorAccel    = cmd.substring(3).toFloat();
+            if      (cmd.startsWith("kpv"))  Kp_vel         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kvi"))  Ki_vel         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kp"))   Kp             = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("kd"))   Kd             = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("ki"))   Ki             = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("sp"))   BALANCE_ANGLE  = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("ac")) { motorAccel     = cmd.substring(3).toFloat();
                                              step1.setAccelerationRad(motorAccel);
                                              step2.setAccelerationRad(motorAccel); }
-            else if (cmd.startsWith("mts"))  MAX_TILT_SP   = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("mw"))   maxWheelSpeed = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("ps"))   POS_STEP      = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("pt"))   posTarget     = cmd.substring(3).toFloat();
-            else if (cmd.startsWith("tr"))   turnBias      = constrain(cmd.substring(3).toFloat(), -MAX_TURN_BIAS, MAX_TURN_BIAS);
+            else if (cmd.startsWith("mts"))  MAX_TILT_SP    = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("mvt"))  MAX_VEL_TARGET = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("mw"))   maxWheelSpeed  = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("vs"))   VEL_STEP       = cmd.substring(3).toFloat();
+            else if (cmd.startsWith("vt"))   velTarget      = constrain(cmd.substring(3).toFloat(), -MAX_VEL_TARGET, MAX_VEL_TARGET);
+            else if (cmd.startsWith("tr"))   turnBias       = constrain(cmd.substring(3).toFloat(), -MAX_TURN_BIAS, MAX_TURN_BIAS);
             else if (cmd == "en 0")          { digitalWrite(STEPPER_EN_PIN, HIGH); Serial.println("Motors DISABLED"); return; }
             else if (cmd == "en 1")          { digitalWrite(STEPPER_EN_PIN, LOW);  Serial.println("Motors ENABLED");  return; }
 
-            Serial.printf("Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpp=%.4f  Kdp=%.4f  sp=%.4f  ac=%.1f  mw=%.1f\n",
-                          Kp, Kd, Ki, Kp_pos, Kd_pos, BALANCE_ANGLE, motorAccel, maxWheelSpeed);
+            Serial.printf("Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpv=%.4f  Kvi=%.5f  sp=%.4f  ac=%.1f  mw=%.1f\n",
+                          Kp, Kd, Ki, Kp_vel, Ki_vel, BALANCE_ANGLE, motorAccel, maxWheelSpeed);
         }
     }
 
@@ -329,11 +333,11 @@ void loop()
         if (fabsf(theta) > FALL_ANGLE) {
             step1.setTargetSpeedRad(0.0f);
             step2.setTargetSpeedRad(0.0f);
-            posEst     = 0.5f*(step1.getPositionRad()-step2.getPositionRad());
-            posTarget  = posEst;
-            prevPosEst = posEst;
-            tiltSP     = 0.0f;
-            integral   = 0.0f;
+            velTarget   = 0.0f;
+            velIntegral = 0.0f;
+            velEst      = 0.0f;
+            tiltSP      = 0.0f;
+            integral    = 0.0f;
             return;
         }
 
@@ -381,24 +385,28 @@ void loop()
     }
 
 
-    // ── Outer PD position loop at 20 Hz ──────────────────────────
+    // ── Outer velocity PI loop at 20 Hz ──────────────────────────
     static unsigned long outerTimer = 0;
-    if (millis() - outerTimer >= OUTER_INTERVAL_MS) {
-        outerTimer += OUTER_INTERVAL_MS;
-        const float dt_outer = OUTER_INTERVAL_MS / 1000.0f;
-        posEst = 0.5f * (step1.getPositionRad() - step2.getPositionRad());
-        velEst = (posEst - prevPosEst) / dt_outer;
-        prevPosEst = posEst;
-        float posErr = posTarget - posEst;
-        tiltSP = constrain(Kp_pos * posErr - Kd_pos * velEst, -MAX_TILT_SP, MAX_TILT_SP);
+    if (millis() - outerTimer >= 50) {
+        outerTimer += 50;
+        const float dt_outer = 0.05f;
+        velEst = EMA_ALPHA * 0.5f * (step2.getSpeedRad() - step1.getSpeedRad())
+               + (1.0f - EMA_ALPHA) * velEst;
+        float velErr  = velTarget - velEst;
+        float rawLean = Kp_vel * velErr + Ki_vel * velIntegral;
+        if (fabsf(rawLean) < MAX_TILT_SP)
+            velIntegral += velErr * dt_outer;
+        float maxVI = (Ki_vel > 1e-6f) ? MAX_TILT_SP / Ki_vel : 1000.0f;
+        velIntegral = constrain(velIntegral, -maxVI, maxVI);
+        tiltSP = constrain(rawLean, -MAX_TILT_SP, MAX_TILT_SP);
     }
 
     // ── Diagnostics at 2 Hz ───────────────────────────────────────
     if (millis() - printTimer >= PRINT_INTERVAL_MS) {
         printTimer += PRINT_INTERVAL_MS;
-        Serial.printf("theta=%.4f  gyro=%.3f  posEst=%.3f  posTarget=%.3f  velEst=%.3f  tiltSP=%.4f  "
-                      "Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpp=%.4f  Kdp=%.4f  ac=%.1f  mw=%.1f  sp=%.4f\n",
-                      theta, gyro_rate, posEst, posTarget, velEst, tiltSP,
-                      Kp, Kd, Ki, Kp_pos, Kd_pos, motorAccel, maxWheelSpeed, BALANCE_ANGLE);
+        Serial.printf("theta=%.4f  gyro=%.3f  velEst=%.3f  velTgt=%.3f  tiltSP=%.4f  vint=%.4f  "
+                      "Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpv=%.4f  Kvi=%.5f  ac=%.1f  mw=%.1f  sp=%.4f\n",
+                      theta, gyro_rate, velEst, velTarget, tiltSP, velIntegral,
+                      Kp, Kd, Ki, Kp_vel, Ki_vel, motorAccel, maxWheelSpeed, BALANCE_ANGLE);
     }
 }
