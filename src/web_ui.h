@@ -39,6 +39,9 @@ input[type=range]{flex:1;accent-color:#4af}
     <div><span class="k">velEst </span><span class="v" id="t_ve">—</span></div>
     <div><span class="k">velTgt </span><span class="v" id="t_vt">—</span></div>
     <div><span class="k">vInteg </span><span class="v" id="t_vi">—</span></div>
+    <div><span class="k">yaw ω  </span><span class="v" id="t_yr">—</span></div>
+    <div><span class="k">yawCorr</span><span class="v" id="t_yc">—</span></div>
+    <div><span class="k">yawTgt </span><span class="v" id="t_yt">—</span></div>
   </div>
 </div>
 <div class="card">
@@ -68,8 +71,13 @@ input[type=range]{flex:1;accent-color:#4af}
   <div class="row"><label>Vel step</label><input type="range" id="vs" min="0.1" max="5" step="0.1" oninput="send('vs',this.value)"> <span class="val" id="vs_v">—</span></div>
   <div class="row"><label>Max vel</label><input type="range" id="mvt" min="1" max="15" step="0.5" oninput="send('mvt',this.value)"> <span class="val" id="mvt_v">—</span></div>
   <div class="row"><label>EMA α</label><input type="range" id="ema" min="0.01" max="1" step="0.01" oninput="send('ema',this.value)"> <span class="val" id="ema_v">—</span></div>
-  <div class="row"><label>Turn step</label><input type="range" id="trns" min="0.5"   max="10"    step="0.5"   oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
-  <div class="row"><label>Max turn</label><input type="range" id="mtb"  min="1"     max="20"    step="0.5"   oninput="send('mtb',this.value)"> <span class="val" id="mtb_v">—</span></div>
+</div>
+<div class="card"><b>YAW CONTROL</b>
+  <div class="row"><label>Kp yaw</label><input type="range" id="kyp" min="0" max="5" step="0.01" oninput="send('kyp',this.value)"><span class="val" id="kyp_v">—</span></div>
+  <div class="row"><label>Max corr</label><input type="range" id="myc" min="0" max="10" step="0.1" oninput="send('myc',this.value)"><span class="val" id="myc_v">—</span></div>
+  <div class="row"><label>Yaw EMA</label><input type="range" id="yea" min="0.01" max="1" step="0.01" oninput="send('yea',this.value)"><span class="val" id="yea_v">—</span></div>
+  <div class="row"><label>Yaw step</label><input type="range" id="trns" min="0.1" max="5" step="0.1" oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
+  <div class="row"><label>Max yaw</label><input type="range" id="mtb" min="0.5" max="10" step="0.5" oninput="send('mtb',this.value)"><span class="val" id="mtb_v">—</span></div>
   <div class="dpad">
     <div></div>
     <button class="dbtn" onpointerdown="startMove('w')" onpointerup="stopMove('w')" onpointerleave="stopMove('w')">&#9650;</button>
@@ -84,7 +92,7 @@ input[type=range]{flex:1;accent-color:#4af}
 </div>
 <script>
 function send(p,v){
-  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts')?3:(p==='ema')?2:1;
+  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
@@ -100,13 +108,16 @@ function poll(){
     document.getElementById('t_ve').textContent=d.velEst.toFixed(3)+' r/s';
     document.getElementById('t_vt').textContent=d.velTarget.toFixed(3)+' r/s';
     document.getElementById('t_vi').textContent=(d.vint||0).toFixed(4);
+    document.getElementById('t_yr').textContent=(d.yaw_rate||0).toFixed(4)+' r/s';
+    document.getElementById('t_yc').textContent=(d.yawCorr||0).toFixed(4)+' r/s';
+    document.getElementById('t_yt').textContent=(d.turnBias||0).toFixed(3)+' r/s';
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','mw','cf','sp','kpv','kvi','mts','vs','mvt','ema','trns','mtb'].forEach(function(p){
+      ['kp','kd','ki','ac','mw','cf','sp','kpv','kvi','mts','vs','mvt','ema','trns','mtb','kyp','myc','yea'].forEach(function(p){
         document.getElementById(p).value=d[p];
-        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts')?3:(p==='ema')?2:1;
+        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
         document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
       });
     }

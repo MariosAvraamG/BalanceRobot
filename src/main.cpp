@@ -35,7 +35,11 @@ float MAX_TURN_BIAS  = 4.0f;    // rad/s — turnBias ceiling
 float velTarget   = 0.0f;  // commanded velocity (rad/s)
 float velIntegral = 0.0f;  // velocity I accumulator
 float tiltSP      = 0.0f;  // outer loop output: lean offset fed to inner PID (rad)
-float turnBias    = 0.0f;  // differential speed for turning (rad/s); + = right
+float turnBias    = 0.0f;  // yaw rate setpoint (rad/s); + = right
+
+float Kp_yaw        = 0.0f;   // yaw P gain — set 0 until gyro.z sign verified on hardware
+float MAX_YAW_CORR  = 3.0f;   // rad/s ceiling on yaw correction
+float YAW_EMA_ALPHA = 0.7f;   // gyro.z EMA smoothing (0=frozen, 1=raw)
 
 
 const int   LOOP_INTERVAL_MS    = 5;      // ms
@@ -61,9 +65,14 @@ float    gyro_rate   = 0.0f;
 float    gyro_raw    = 0.0f;   // raw (un-biased) gyro reading
 float    integral    = 0.0f;   // PID integral — global so calibration can reset it
 float    velEst      = 0.0f;   // EMA-filtered wheel speed (rad/s) from getSpeedRad()
-bool     imuOk       = true;
-uint32_t imuErrCount = 0;
-uint32_t lastCalibMs = 0;
+bool          imuOk       = true;
+uint32_t      imuErrCount = 0;
+uint32_t      lastCalibMs = 0;
+volatile bool calibrating = false;  // raised by web handler; main loop yields I2C
+unsigned long lastLoopUs  = 0;      // tracks micros() of last control tick
+float gyroBiasZ   = 0.0f;  // gyro.z offset measured at calibration
+float yaw_rate    = 0.0f;  // EMA-filtered bias-corrected gyro.z (rad/s) — telemetry
+float yawCorrection = 0.0f; // yaw controller output applied to motors — telemetry
 
 // ─────────────────────────────────────────────────────────────────
 //  Web tuner
@@ -102,21 +111,26 @@ bool IRAM_ATTR TimerHandler(void*)
 void calibrate()
 {
     float gyroSum  = 0.0f;
+    float gyroZSum = 0.0f;
     float accelSum = 0.0f;
     const int N = 200;
     for (int i = 0; i < N; i++) {
         sensors_event_t a, g, tmp;
         mpu.getEvent(&a, &g, &tmp);
         gyroSum  += g.gyro.y;
+        gyroZSum += g.gyro.z;
         accelSum += atan2f(a.acceleration.z, a.acceleration.x);
         delay(5);
     }
-    
+
     gyroBias      = gyroSum  / N;
+    gyroBiasZ     = gyroZSum / N;
     BALANCE_ANGLE = accelSum / N;
+    yaw_rate      = 0.0f;
+    yawCorrection = 0.0f;
     lastCalibMs   = millis();
-    Serial.printf("Calibrated — bias=%.4f  balance=%.4f rad (%.2f deg)\n",
-                  gyroBias, BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
+    Serial.printf("Calibrated — bias_y=%.4f  bias_z=%.4f  balance=%.4f rad (%.2f deg)\n",
+                  gyroBias, gyroBiasZ, BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
 }
 
 void setup()
@@ -156,7 +170,7 @@ void setup()
     // Robot must be stationary during this window.
     // ── WiFi Access Point ─────────────────────────────────────────
     WiFi.softAP("BalanceBot2", "balance123");
-    Serial.printf("Web tuner: connect to WiFi 'BalanceBot' then open http://%s\n",
+    Serial.printf("Web tuner: connect to WiFi 'BalanceBot2' then open http://%s\n",
                   WiFi.softAPIP().toString().c_str());
 
     server.on("/", [](){
@@ -175,8 +189,11 @@ void setup()
         if (server.hasArg("ema")) EMA_ALPHA      = constrain(server.arg("ema").toFloat(), 0.01f, 1.0f);
         if (server.hasArg("trns")) TURN_STEP     = server.arg("trns").toFloat();
         if (server.hasArg("mtb")) MAX_TURN_BIAS  = server.arg("mtb").toFloat();
-        if (server.hasArg("mw")) maxWheelSpeed = server.arg("mw").toFloat();
-        if (server.hasArg("cf")) CF_COEFF      = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
+        if (server.hasArg("mw"))  maxWheelSpeed  = server.arg("mw").toFloat();
+        if (server.hasArg("cf"))  CF_COEFF       = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
+        if (server.hasArg("kyp")) Kp_yaw         = server.arg("kyp").toFloat();
+        if (server.hasArg("myc")) MAX_YAW_CORR   = server.arg("myc").toFloat();
+        if (server.hasArg("yea")) YAW_EMA_ALPHA  = constrain(server.arg("yea").toFloat(), 0.01f, 1.0f);
         if (server.hasArg("ac")) {
             motorAccel = server.arg("ac").toFloat();
             step1.setAccelerationRad(motorAccel);
@@ -201,12 +218,15 @@ void setup()
         tiltSP   = 0.0f;
         turnBias = 0.0f;
         integral = 0.0f;
-        delay(300);  // let motors coast to stop before sampling
+        calibrating = true;   // pause control-loop I2C access (core 1)
+        delay(300);           // let motors coast; main loop sees flag within one 5 ms tick
         Serial.println("Web calibration — hold robot upright and still...");
         calibrate();
         velTarget   = 0.0f;
         velIntegral = 0.0f;
         velEst      = 0.0f;
+        lastLoopUs  = 0;      // force dt=LOOP_INTERVAL_S on first tick after resume
+        calibrating = false;
         char buf[64];
         snprintf(buf, sizeof(buf), "{\"ok\":true,\"sp\":%.4f}", BALANCE_ANGLE);
         server.send(200, "application/json", buf);
@@ -214,18 +234,20 @@ void setup()
     server.on("/status", [](){
         uint32_t upSec    = millis() / 1000;
         uint32_t calSec   = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
-        char buf[560];
+        char buf[740];
         snprintf(buf, sizeof(buf),
             "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
             "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
             "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
             "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
-            "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f}",
+            "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
+            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"myc\":%.2f,\"yea\":%.2f,\"biasZ\":%.4f}",
             theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
             Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
             gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
             velEst, velTarget, tiltSP, velIntegral,
-            Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS);
+            Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
+            yaw_rate, yawCorrection, turnBias, Kp_yaw, MAX_YAW_CORR, YAW_EMA_ALPHA, gyroBiasZ);
         server.send(200, "application/json", buf);
     });
     server.begin();
@@ -247,7 +269,6 @@ void loop()
 {
     static unsigned long loopTimer  = 0;
     static unsigned long printTimer = 0;
-    static unsigned long lastLoopUs = 0;
 
     // ── Serial command parser ──────────────────────────────────────
     if (Serial.available()) {
@@ -270,6 +291,9 @@ void loop()
             cmd.trim();
             if      (cmd.startsWith("kpv"))  Kp_vel         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("kvi"))  Ki_vel         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kyp"))  Kp_yaw         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("myc"))  MAX_YAW_CORR   = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("yea"))  YAW_EMA_ALPHA  = constrain(cmd.substring(4).toFloat(), 0.01f, 1.0f);
             else if (cmd.startsWith("kp"))   Kp             = cmd.substring(3).toFloat();
             else if (cmd.startsWith("kd"))   Kd             = cmd.substring(3).toFloat();
             else if (cmd.startsWith("ki"))   Ki             = cmd.substring(3).toFloat();
@@ -282,6 +306,7 @@ void loop()
             else if (cmd.startsWith("mw"))   maxWheelSpeed  = cmd.substring(3).toFloat();
             else if (cmd.startsWith("vs"))   VEL_STEP       = cmd.substring(3).toFloat();
             else if (cmd.startsWith("vt"))   velTarget      = constrain(cmd.substring(3).toFloat(), -MAX_VEL_TARGET, MAX_VEL_TARGET);
+            else if (cmd.startsWith("trns"))  TURN_STEP      = cmd.substring(5).toFloat();
             else if (cmd.startsWith("tr"))   turnBias       = constrain(cmd.substring(3).toFloat(), -MAX_TURN_BIAS, MAX_TURN_BIAS);
             else if (cmd == "en 0")          { digitalWrite(STEPPER_EN_PIN, HIGH); Serial.println("Motors DISABLED"); return; }
             else if (cmd == "en 1")          { digitalWrite(STEPPER_EN_PIN, LOW);  Serial.println("Motors ENABLED");  return; }
@@ -293,11 +318,14 @@ void loop()
 
     // ── Control loop at 200 Hz ────────────────────────────────────
     if (millis() - loopTimer >= LOOP_INTERVAL_MS) {
+        loopTimer += LOOP_INTERVAL_MS;
+
+        if (calibrating) return;  // yield I2C bus to calibration running on core 0
+
         unsigned long nowUs = micros();
         float dt = (lastLoopUs == 0) ? LOOP_INTERVAL_S
                                      : constrain((nowUs - lastLoopUs) * 1e-6f, 0.001f, 0.020f);
         lastLoopUs = nowUs;
-        loopTimer += LOOP_INTERVAL_MS;
 
         // 1. Read IMU (with retry for I2C errors under ISR load)
         sensors_event_t a, g, tmp;
@@ -325,6 +353,10 @@ void loop()
         float accel_angle = atan2f(a.acceleration.z, a.acceleration.x);
         gyro_raw          = g.gyro.y;
         gyro_rate         = g.gyro.y - gyroBias;  // bias-corrected pitch rate
+
+        // Yaw rate: bias-correct gyro.z, negate so clockwise = positive, then EMA
+        float raw_yaw = -(g.gyro.z - gyroBiasZ);
+        yaw_rate = YAW_EMA_ALPHA * raw_yaw + (1.0f - YAW_EMA_ALPHA) * yaw_rate;
 
         theta = (1.0f - CF_COEFF) * accel_angle
               + CF_COEFF * (theta + gyro_rate * dt);
@@ -376,12 +408,24 @@ void loop()
         // limit the motor cannot achieve.
         output = constrain(output, -maxWheelSpeed, maxWheelSpeed);
 
-        // 6. Drive motors
+        // 6. Yaw rate controller
+        //    turnBias is now the yaw rate setpoint (rad/s).
+        //    Error = desired yaw rate − measured yaw rate.
+        //    Correction is clamped to the headroom left by the balance
+        //    output so neither motor exceeds maxWheelSpeed.
+        {
+            float headroom = maxWheelSpeed - fabsf(output);
+            float limit    = constrain(MAX_YAW_CORR, 0.0f, headroom);
+            yawCorrection  = constrain(Kp_yaw * (turnBias - yaw_rate), -limit, limit);
+        }
+
+        // 7. Drive motors
         //    Motor 2 is mounted mirrored → opposite sign.
-        //    turnBias added to both: because step2 is already inverted,
-        //    this creates a differential that turns the robot.
-        step1.setTargetSpeedRad( output + turnBias);
-        step2.setTargetSpeedRad(-output + turnBias);
+        //    yawCorrection subtracted from both: because step2 is already
+        //    negated, subtracting the same value drives the wheels in
+        //    opposite physical directions, creating the correct yaw torque.
+        step1.setTargetSpeedRad( output - yawCorrection);
+        step2.setTargetSpeedRad(-output - yawCorrection);
     }
 
 
@@ -405,8 +449,10 @@ void loop()
     if (millis() - printTimer >= PRINT_INTERVAL_MS) {
         printTimer += PRINT_INTERVAL_MS;
         Serial.printf("theta=%.4f  gyro=%.3f  velEst=%.3f  velTgt=%.3f  tiltSP=%.4f  vint=%.4f  "
-                      "Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpv=%.4f  Kvi=%.5f  ac=%.1f  mw=%.1f  sp=%.4f\n",
+                      "Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpv=%.4f  Kvi=%.5f  ac=%.1f  mw=%.1f  sp=%.4f  "
+                      "yaw=%.4f  yawCorr=%.4f  kyp=%.4f\n",
                       theta, gyro_rate, velEst, velTarget, tiltSP, velIntegral,
-                      Kp, Kd, Ki, Kp_vel, Ki_vel, motorAccel, maxWheelSpeed, BALANCE_ANGLE);
+                      Kp, Kd, Ki, Kp_vel, Ki_vel, motorAccel, maxWheelSpeed, BALANCE_ANGLE,
+                      yaw_rate, yawCorrection, Kp_yaw);
     }
 }
