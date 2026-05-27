@@ -28,18 +28,20 @@ float EMA_ALPHA      = 0.90f;    // velEst smoothing (0=frozen, 1=raw)
 float Kp_vel         = 0.005f;  // velocity P gain: velErr (rad/s) → tiltSP (rad)
 float Ki_vel         = 0.001f;  // velocity I gain
 float VEL_STEP       = 1.0f;    // rad/s per button press
-float MAX_VEL_TARGET = 15.0f;    // rad/s ceiling on velTarget
-float TURN_STEP      = 2.0f;    // rad/s added to turnBias per A/D press
-float MAX_TURN_BIAS  = 4.0f;    // rad/s — turnBias ceiling
+float MAX_VEL_TARGET = 9.5f;    // rad/s ceiling on velTarget
+float TURN_STEP      = 0.1f;    // rad/s added to turnBias per A/D press
+float MAX_TURN_BIAS  = 2.0f;    // rad/s — turnBias ceiling
 
 float velTarget   = 0.0f;  // commanded velocity (rad/s)
 float velIntegral = 0.0f;  // velocity I accumulator
 float tiltSP      = 0.0f;  // outer loop output: lean offset fed to inner PID (rad)
 float turnBias    = 0.0f;  // yaw rate setpoint (rad/s); + = right
 
-float Kp_yaw        = 0.0f;   // yaw P gain — set 0 until gyro.z sign verified on hardware
-float MAX_YAW_CORR  = 3.0f;   // rad/s ceiling on yaw correction
-float YAW_EMA_ALPHA = 0.7f;   // gyro.z EMA smoothing (0=frozen, 1=raw)
+float Kp_yaw        = 0.180f;   // yaw P gain
+float Ki_yaw        = 0.0100f;   // yaw I gain — tune after Kp is stable
+float Kd_yaw        = 0.0230f;   // yaw D gain — differentiates filtered yaw_rate
+float MAX_YAW_CORR  = 1.0f;   // rad/s ceiling on yaw correction
+float YAW_EMA_ALPHA = 0.90f;   // gyro.z EMA smoothing (0=frozen, 1=raw)
 
 
 const int   LOOP_INTERVAL_MS    = 5;      // ms
@@ -73,6 +75,8 @@ unsigned long lastLoopUs  = 0;      // tracks micros() of last control tick
 float gyroBiasZ   = 0.0f;  // gyro.z offset measured at calibration
 float yaw_rate    = 0.0f;  // EMA-filtered bias-corrected gyro.z (rad/s) — telemetry
 float yawCorrection = 0.0f; // yaw controller output applied to motors — telemetry
+float yawIntegral   = 0.0f; // yaw I accumulator
+float prevYawRate   = 0.0f; // previous yaw_rate for D term
 
 // ─────────────────────────────────────────────────────────────────
 //  Web tuner
@@ -128,6 +132,8 @@ void calibrate()
     BALANCE_ANGLE = accelSum / N;
     yaw_rate      = 0.0f;
     yawCorrection = 0.0f;
+    yawIntegral   = 0.0f;
+    prevYawRate   = 0.0f;
     lastCalibMs   = millis();
     Serial.printf("Calibrated — bias_y=%.4f  bias_z=%.4f  balance=%.4f rad (%.2f deg)\n",
                   gyroBias, gyroBiasZ, BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
@@ -192,6 +198,8 @@ void setup()
         if (server.hasArg("mw"))  maxWheelSpeed  = server.arg("mw").toFloat();
         if (server.hasArg("cf"))  CF_COEFF       = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
         if (server.hasArg("kyp")) Kp_yaw         = server.arg("kyp").toFloat();
+        if (server.hasArg("kyi")) Ki_yaw         = server.arg("kyi").toFloat();
+        if (server.hasArg("kyd")) Kd_yaw         = server.arg("kyd").toFloat();
         if (server.hasArg("myc")) MAX_YAW_CORR   = server.arg("myc").toFloat();
         if (server.hasArg("yea")) YAW_EMA_ALPHA  = constrain(server.arg("yea").toFloat(), 0.01f, 1.0f);
         if (server.hasArg("ac")) {
@@ -241,13 +249,13 @@ void setup()
             "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
             "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
             "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
-            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"myc\":%.2f,\"yea\":%.2f,\"biasZ\":%.4f}",
+            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kyi\":%.5f,\"kyd\":%.4f,\"myc\":%.2f,\"yea\":%.2f,\"biasZ\":%.4f}",
             theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
             Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
             gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
             velEst, velTarget, tiltSP, velIntegral,
             Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
-            yaw_rate, yawCorrection, turnBias, Kp_yaw, MAX_YAW_CORR, YAW_EMA_ALPHA, gyroBiasZ);
+            yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, MAX_YAW_CORR, YAW_EMA_ALPHA, gyroBiasZ);
         server.send(200, "application/json", buf);
     });
     server.begin();
@@ -292,6 +300,8 @@ void loop()
             if      (cmd.startsWith("kpv"))  Kp_vel         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("kvi"))  Ki_vel         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("kyp"))  Kp_yaw         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kyi"))  Ki_yaw         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kyd"))  Kd_yaw         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("myc"))  MAX_YAW_CORR   = cmd.substring(4).toFloat();
             else if (cmd.startsWith("yea"))  YAW_EMA_ALPHA  = constrain(cmd.substring(4).toFloat(), 0.01f, 1.0f);
             else if (cmd.startsWith("kp"))   Kp             = cmd.substring(3).toFloat();
@@ -370,6 +380,8 @@ void loop()
             velEst      = 0.0f;
             tiltSP      = 0.0f;
             integral    = 0.0f;
+            yawIntegral = 0.0f;
+            prevYawRate = 0.0f;
             return;
         }
 
@@ -408,15 +420,27 @@ void loop()
         // limit the motor cannot achieve.
         output = constrain(output, -maxWheelSpeed, maxWheelSpeed);
 
-        // 6. Yaw rate controller
-        //    turnBias is now the yaw rate setpoint (rad/s).
-        //    Error = desired yaw rate − measured yaw rate.
-        //    Correction is clamped to the headroom left by the balance
-        //    output so neither motor exceeds maxWheelSpeed.
+        // 6. Yaw PID controller
+        //    turnBias is the yaw rate setpoint (rad/s).
+        //    D term differentiates the EMA-filtered yaw_rate directly,
+        //    which is smoother than differentiating raw gyro.z.
+        //    Sign: d(error)/dt = -d(yaw_rate)/dt → subtract yaw_accel.
+        //    Conditional integration anti-windup: integrator only
+        //    accumulates when the full PID output is within the clamp.
         {
-            float headroom = maxWheelSpeed - fabsf(output);
-            float limit    = constrain(MAX_YAW_CORR, 0.0f, headroom);
-            yawCorrection  = constrain(Kp_yaw * (turnBias - yaw_rate), -limit, limit);
+            float headroom  = maxWheelSpeed - fabsf(output);
+            float limit     = constrain(MAX_YAW_CORR, 0.0f, headroom);
+            float yawErr    = turnBias - yaw_rate;
+            float yaw_accel = (yaw_rate - prevYawRate) / dt;
+            prevYawRate     = yaw_rate;
+            float rawCorr   = Kp_yaw * yawErr
+                            + Ki_yaw * yawIntegral
+                            - Kd_yaw * yaw_accel;
+            if (fabsf(rawCorr) < limit)
+                yawIntegral += yawErr * dt;
+            float maxYI    = (Ki_yaw > 1e-6f) ? limit / Ki_yaw : 1000.0f;
+            yawIntegral    = constrain(yawIntegral, -maxYI, maxYI);
+            yawCorrection  = constrain(rawCorr, -limit, limit);
         }
 
         // 7. Drive motors
@@ -450,9 +474,9 @@ void loop()
         printTimer += PRINT_INTERVAL_MS;
         Serial.printf("theta=%.4f  gyro=%.3f  velEst=%.3f  velTgt=%.3f  tiltSP=%.4f  vint=%.4f  "
                       "Kp=%.1f  Kd=%.1f  Ki=%.3f  Kpv=%.4f  Kvi=%.5f  ac=%.1f  mw=%.1f  sp=%.4f  "
-                      "yaw=%.4f  yawCorr=%.4f  kyp=%.4f\n",
+                      "yaw=%.4f  yawCorr=%.4f  yawInt=%.4f  kyp=%.3f  kyi=%.5f  kyd=%.4f\n",
                       theta, gyro_rate, velEst, velTarget, tiltSP, velIntegral,
                       Kp, Kd, Ki, Kp_vel, Ki_vel, motorAccel, maxWheelSpeed, BALANCE_ANGLE,
-                      yaw_rate, yawCorrection, Kp_yaw);
+                      yaw_rate, yawCorrection, yawIntegral, Kp_yaw, Ki_yaw, Kd_yaw);
     }
 }

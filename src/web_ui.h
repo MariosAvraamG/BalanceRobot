@@ -41,6 +41,7 @@ input[type=range]{flex:1;accent-color:#4af}
     <div><span class="k">vInteg </span><span class="v" id="t_vi">—</span></div>
     <div><span class="k">yaw ω  </span><span class="v" id="t_yr">—</span></div>
     <div><span class="k">yawCorr</span><span class="v" id="t_yc">—</span></div>
+    <div><span class="k">yawInt </span><span class="v" id="t_yi">—</span></div>
     <div><span class="k">yawTgt </span><span class="v" id="t_yt">—</span></div>
   </div>
 </div>
@@ -74,6 +75,8 @@ input[type=range]{flex:1;accent-color:#4af}
 </div>
 <div class="card"><b>YAW CONTROL</b>
   <div class="row"><label>Kp yaw</label><input type="range" id="kyp" min="0" max="5" step="0.01" oninput="send('kyp',this.value)"><span class="val" id="kyp_v">—</span></div>
+  <div class="row"><label>Ki yaw</label><input type="range" id="kyi" min="0" max="1" step="0.001" oninput="send('kyi',this.value)"><span class="val" id="kyi_v">—</span></div>
+  <div class="row"><label>Kd yaw</label><input type="range" id="kyd" min="0" max="1" step="0.001" oninput="send('kyd',this.value)"><span class="val" id="kyd_v">—</span></div>
   <div class="row"><label>Max corr</label><input type="range" id="myc" min="0" max="10" step="0.1" oninput="send('myc',this.value)"><span class="val" id="myc_v">—</span></div>
   <div class="row"><label>Yaw EMA</label><input type="range" id="yea" min="0.01" max="1" step="0.01" oninput="send('yea',this.value)"><span class="val" id="yea_v">—</span></div>
   <div class="row"><label>Yaw step</label><input type="range" id="trns" min="0.1" max="5" step="0.1" oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
@@ -92,7 +95,7 @@ input[type=range]{flex:1;accent-color:#4af}
 </div>
 <script>
 function send(p,v){
-  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
+  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kyi'||p==='kyd')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
@@ -110,14 +113,15 @@ function poll(){
     document.getElementById('t_vi').textContent=(d.vint||0).toFixed(4);
     document.getElementById('t_yr').textContent=(d.yaw_rate||0).toFixed(4)+' r/s';
     document.getElementById('t_yc').textContent=(d.yawCorr||0).toFixed(4)+' r/s';
+    document.getElementById('t_yi').textContent=(d.yawInt||0).toFixed(4);
     document.getElementById('t_yt').textContent=(d.turnBias||0).toFixed(3)+' r/s';
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','mw','cf','sp','kpv','kvi','mts','vs','mvt','ema','trns','mtb','kyp','myc','yea'].forEach(function(p){
+      ['kp','kd','ki','ac','mw','cf','sp','kpv','kvi','mts','vs','mvt','ema','trns','mtb','kyp','kyi','kyd','myc','yea'].forEach(function(p){
         document.getElementById(p).value=d[p];
-        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
+        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kyi'||p==='kyd')?4:(p==='cf'||p==='mts'||p==='kyp')?3:(p==='ema'||p==='yea')?2:1;
         document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
       });
     }
