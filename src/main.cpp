@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <SPI.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
 #include <WebServer.h>
 #include <TimerInterrupt_Generic.h>
 #include <Adafruit_MPU6050.h>
@@ -40,7 +41,6 @@ float turnBias    = 0.0f;  // yaw rate setpoint (rad/s); + = right
 float Kp_yaw        = 0.180f;   // yaw P gain
 float Ki_yaw        = 0.0100f;   // yaw I gain — tune after Kp is stable
 float Kd_yaw        = 0.0230f;   // yaw D gain — differentiates filtered yaw_rate
-float MAX_YAW_CORR  = 1.0f;   // rad/s ceiling on yaw correction
 float YAW_EMA_ALPHA = 0.90f;   // gyro.z EMA smoothing (0=frozen, 1=raw)
 
 
@@ -69,7 +69,8 @@ float    integral    = 0.0f;   // PID integral — global so calibration can res
 float    velEst      = 0.0f;   // EMA-filtered wheel speed (rad/s) from getSpeedRad()
 bool          imuOk       = true;
 uint32_t      imuErrCount = 0;
-uint32_t      lastCalibMs = 0;
+uint32_t      lastCalibMs   = 0;
+uint32_t      lastTurnCmdMs = 0;
 volatile bool calibrating = false;  // raised by web handler; main loop yields I2C
 unsigned long lastLoopUs  = 0;      // tracks micros() of last control tick
 float gyroBiasZ   = 0.0f;  // gyro.z offset measured at calibration
@@ -77,6 +78,7 @@ float yaw_rate    = 0.0f;  // EMA-filtered bias-corrected gyro.z (rad/s) — tel
 float yawCorrection = 0.0f; // yaw controller output applied to motors — telemetry
 float yawIntegral   = 0.0f; // yaw I accumulator
 float prevYawRate   = 0.0f; // previous yaw_rate for D term
+unsigned long lastEspNowMs = 0; // timestamp of last ESP-NOW command (0 = never received)
 
 // ─────────────────────────────────────────────────────────────────
 //  Web tuner
@@ -109,9 +111,24 @@ bool IRAM_ATTR TimerHandler(void*)
 }
 
 // ─────────────────────────────────────────────────────────────────
-//  Gyro bias + balance angle calibration (200 samples, ~1 s)
-//  Robot must be stationary and upright during the sampling window.
+//  ESP-NOW command reception
+//  Sender must pack a matching struct and target this device's AP MAC.
 // ─────────────────────────────────────────────────────────────────
+typedef struct {
+    float linear_vel;   // rad/s → velTarget  (wheel angular speed)
+    float angular_vel;  // rad/s → turnBias   (yaw rate setpoint)
+} EspNowCmd;
+
+void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
+    if (len < (int)sizeof(EspNowCmd)) return;
+    EspNowCmd cmd;
+    memcpy(&cmd, data, sizeof(cmd));
+    velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
+    turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
+    lastTurnCmdMs = millis();
+    lastEspNowMs  = millis();
+}
+
 void calibrate()
 {
     float gyroSum  = 0.0f;
@@ -176,8 +193,17 @@ void setup()
     // Robot must be stationary during this window.
     // ── WiFi Access Point ─────────────────────────────────────────
     WiFi.softAP("BalanceBot2", "balance123");
+    esp_wifi_set_ps(WIFI_PS_NONE);
     Serial.printf("Web tuner: connect to WiFi 'BalanceBot2' then open http://%s\n",
                   WiFi.softAPIP().toString().c_str());
+
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP-NOW init failed");
+    } else {
+        esp_now_register_recv_cb(onEspNowRecv);
+        Serial.printf("ESP-NOW ready — target this AP MAC on sender: %s  channel: %d\n",
+                      WiFi.softAPmacAddress().c_str(), WiFi.channel());
+    }
 
     server.on("/", [](){
         server.send_P(200, "text/html", HTML);
@@ -198,9 +224,8 @@ void setup()
         if (server.hasArg("mw"))  maxWheelSpeed  = server.arg("mw").toFloat();
         if (server.hasArg("cf"))  CF_COEFF       = constrain(server.arg("cf").toFloat(), 0.0f, 0.9999f);
         if (server.hasArg("kyp")) Kp_yaw         = server.arg("kyp").toFloat();
-        if (server.hasArg("kyi")) Ki_yaw         = server.arg("kyi").toFloat();
-        if (server.hasArg("kyd")) Kd_yaw         = server.arg("kyd").toFloat();
-        if (server.hasArg("myc")) MAX_YAW_CORR   = server.arg("myc").toFloat();
+        if (server.hasArg("kiy")) Ki_yaw         = server.arg("kiy").toFloat();
+        if (server.hasArg("kdy")) Kd_yaw         = server.arg("kdy").toFloat();
         if (server.hasArg("yea")) YAW_EMA_ALPHA  = constrain(server.arg("yea").toFloat(), 0.01f, 1.0f);
         if (server.hasArg("ac")) {
             motorAccel = server.arg("ac").toFloat();
@@ -211,13 +236,17 @@ void setup()
     });
     server.on("/move", [](){
         String dir = server.arg("dir");
-        if      (dir == "w")         velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
-        else if (dir == "s")         velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
-        else if (dir == "a")         turnBias  = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS);
-        else if (dir == "d")         turnBias  = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS);
-        else if (dir == "stop")    { velTarget = 0.0f; tiltSP = 0.0f; integral = 0.0f; turnBias = 0.0f; }
-        else if (dir == "stop_fb") { velTarget = 0.0f; integral = 0.0f; }
-        else if (dir == "stop_turn") turnBias  = 0.0f;
+        if      (dir == "w")  velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
+        else if (dir == "s")  velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET);
+        else if (dir == "a")  { turnBias = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "d")  { turnBias = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "wa") { velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); turnBias = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "wd") { velTarget = constrain(velTarget + VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); turnBias = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "sa") { velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); turnBias = constrain(turnBias - TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "sd") { velTarget = constrain(velTarget - VEL_STEP, -MAX_VEL_TARGET, MAX_VEL_TARGET); turnBias = constrain(turnBias + TURN_STEP, -MAX_TURN_BIAS, MAX_TURN_BIAS); lastTurnCmdMs = millis(); }
+        else if (dir == "stop")      { velTarget = 0.0f; tiltSP = 0.0f; integral = 0.0f; velIntegral = 0.0f; turnBias = 0.0f; yawIntegral = 0.0f; }
+        else if (dir == "stop_fb")   { velTarget = 0.0f; integral = 0.0f; velIntegral = 0.0f; }
+        else if (dir == "stop_turn") { turnBias  = 0.0f; yawIntegral = 0.0f; }
         server.send(200, "application/json", "{\"ok\":true}");
     });
     server.on("/calibrate", [](){
@@ -249,19 +278,19 @@ void setup()
             "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
             "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
             "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
-            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kyi\":%.5f,\"kyd\":%.4f,\"myc\":%.2f,\"yea\":%.2f,\"biasZ\":%.4f}",
+            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f}",
             theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
             Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
             gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
             velEst, velTarget, tiltSP, velIntegral,
             Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
-            yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, MAX_YAW_CORR, YAW_EMA_ALPHA, gyroBiasZ);
+            yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ);
         server.send(200, "application/json", buf);
     });
     server.begin();
     xTaskCreatePinnedToCore(
         [](void*){ for(;;){ server.handleClient(); vTaskDelay(1); } },
-        "web", 4096, nullptr, 1, nullptr, 0);
+        "web", 8192, nullptr, 1, nullptr, 0);
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -300,9 +329,8 @@ void loop()
             if      (cmd.startsWith("kpv"))  Kp_vel         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("kvi"))  Ki_vel         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("kyp"))  Kp_yaw         = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("kyi"))  Ki_yaw         = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("kyd"))  Kd_yaw         = cmd.substring(4).toFloat();
-            else if (cmd.startsWith("myc"))  MAX_YAW_CORR   = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kiy"))  Ki_yaw         = cmd.substring(4).toFloat();
+            else if (cmd.startsWith("kdy"))  Kd_yaw         = cmd.substring(4).toFloat();
             else if (cmd.startsWith("yea"))  YAW_EMA_ALPHA  = constrain(cmd.substring(4).toFloat(), 0.01f, 1.0f);
             else if (cmd.startsWith("kp"))   Kp             = cmd.substring(3).toFloat();
             else if (cmd.startsWith("kd"))   Kd             = cmd.substring(3).toFloat();
@@ -429,18 +457,17 @@ void loop()
         //    accumulates when the full PID output is within the clamp.
         {
             float headroom  = maxWheelSpeed - fabsf(output);
-            float limit     = constrain(MAX_YAW_CORR, 0.0f, headroom);
             float yawErr    = turnBias - yaw_rate;
             float yaw_accel = (yaw_rate - prevYawRate) / dt;
             prevYawRate     = yaw_rate;
             float rawCorr   = Kp_yaw * yawErr
                             + Ki_yaw * yawIntegral
                             - Kd_yaw * yaw_accel;
-            if (fabsf(rawCorr) < limit)
+            if (fabsf(rawCorr) < headroom)
                 yawIntegral += yawErr * dt;
-            float maxYI    = (Ki_yaw > 1e-6f) ? limit / Ki_yaw : 1000.0f;
+            float maxYI    = (Ki_yaw > 1e-6f) ? headroom / Ki_yaw : 1000.0f;
             yawIntegral    = constrain(yawIntegral, -maxYI, maxYI);
-            yawCorrection  = constrain(rawCorr, -limit, limit);
+            yawCorrection  = constrain(rawCorr, -headroom, headroom);
         }
 
         // 7. Drive motors
@@ -453,7 +480,21 @@ void loop()
     }
 
 
+    // ── ESP-NOW dead-man: stop if link drops for >500 ms ─────────
+    if (lastEspNowMs && millis() - lastEspNowMs > 500) {
+        velTarget   = 0.0f;
+        turnBias    = 0.0f;
+        velIntegral = 0.0f;
+        yawIntegral = 0.0f;
+        lastEspNowMs = 0;
+    }
+
     // ── Outer velocity PI loop at 20 Hz ──────────────────────────
+    if (lastTurnCmdMs && turnBias != 0.0f && millis() - lastTurnCmdMs > 300) {
+        turnBias    = 0.0f;
+        yawIntegral = 0.0f;
+    }
+
     static unsigned long outerTimer = 0;
     if (millis() - outerTimer >= 50) {
         outerTimer += 50;
