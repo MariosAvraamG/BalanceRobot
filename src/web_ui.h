@@ -29,6 +29,8 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
 .cbtn{width:100%;margin-top:6px;padding:6px;background:#1a1a2e;border:1px solid #4af;border-radius:4px;color:#4af;font-family:monospace;font-size:11px;cursor:pointer}
 .cbtn:active{background:#4af;color:#111}
 .cbtn:disabled{opacity:.5;cursor:default}
+.bat-bg{background:#333;border-radius:3px;height:8px;margin:5px 0 3px}
+.bat-fill{height:8px;border-radius:3px;transition:width .8s,background .8s}
 </style></head><body>
 <h2>BalanceBot Tuner</h2>
 <div class="grid">
@@ -54,6 +56,19 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
       <b>SYSTEM</b>
       <div class="tele">
         <div><span class="k">IMU </span><span class="v" id="s_imu">—</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <b>BATTERY</b>
+      <div class="bat-bg"><div class="bat-fill" id="bat_fill" style="width:0%"></div></div>
+      <div class="tele">
+        <div><span class="k">SoC    </span><span class="v" id="b_soc">—</span></div>
+        <div><span class="k">Vbat   </span><span class="v" id="b_vbat">—</span></div>
+        <div><span class="k">Power  </span><span class="v" id="b_pow">—</span></div>
+        <div><span class="k">Imot   </span><span class="v" id="b_im">—</span></div>
+        <div><span class="k">Ilogic </span><span class="v" id="b_il">—</span></div>
+        <div><span class="k">Energy </span><span class="v" id="b_e">—</span></div>
+        <div><span class="k">t rem  </span><span class="v" id="b_t">—</span></div>
       </div>
     </div>
   </div>
@@ -131,6 +146,19 @@ function poll(){
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
+    if(d.soc!==undefined){
+      var soc=d.soc;
+      document.getElementById('b_soc').textContent=soc.toFixed(1)+'%';
+      document.getElementById('b_vbat').textContent=d.vbat.toFixed(2)+' V';
+      document.getElementById('b_pow').textContent=d.power.toFixed(2)+' W';
+      document.getElementById('b_im').textContent=d.imotor.toFixed(3)+' A';
+      document.getElementById('b_il').textContent=d.ilogic.toFixed(3)+' A';
+      document.getElementById('b_e').textContent=d.energy.toFixed(2)+' Wh';
+      document.getElementById('b_t').textContent=d.trem>900?'∞':d.trem.toFixed(0)+' min';
+      var fill=document.getElementById('bat_fill');
+      fill.style.width=soc+'%';
+      fill.style.background=soc>50?'#4f4':soc>20?'#fa4':'#f44';
+    }
     if(!inited){inited=true;
       ['kp','kd','ki','ac','cf','sp','kpv','kvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea'].forEach(function(p){
         document.getElementById(p).value=d[p];

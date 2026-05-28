@@ -8,6 +8,7 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <step.h>
+#include <SPI.h>
 
 float Kp = 2100.0f;  // saturasting — sign determines motor ramp direction
 float Kd =  240.0f;  // gyro braking — primary tuning parameter
@@ -26,10 +27,10 @@ const float FALL_ANGLE       = 0.4f;   // rad (~23°) — give up balancing
 
 float MAX_TILT_SP    = 0.1f;  // outer loop output clamp (rad)
 float EMA_ALPHA      = 0.90f;    // velEst smoothing (0=frozen, 1=raw)
-float Kp_vel         = 0.005f;  // velocity P gain: velErr (rad/s) → tiltSP (rad)
+float Kp_vel         = 0.007f;  // velocity P gain: velErr (rad/s) → tiltSP (rad)
 float Ki_vel         = 0.001f;  // velocity I gain
 float VEL_STEP       = 1.0f;    // rad/s per button press
-float MAX_VEL_TARGET = 9.5f;    // rad/s ceiling on velTarget
+float MAX_VEL_TARGET = 6.67f;    // rad/s ceiling on velTarget
 float TURN_STEP      = 1.0f;    // rad/s added to turnBias per A/D press
 float MAX_TURN_BIAS  = 3.0f;    // rad/s — turnBias ceiling
 
@@ -39,7 +40,7 @@ float tiltSP      = 0.0f;  // outer loop output: lean offset fed to inner PID (r
 float turnBias    = 0.0f;  // yaw rate setpoint (rad/s); + = right
 
 float Kp_yaw        = 0.180f;   // yaw P gain
-float Ki_yaw        = 0.0100f;   // yaw I gain — tune after Kp is stable
+float Ki_yaw        = 0.0350f;   // yaw I gain — tune after Kp is stable
 float Kd_yaw        = 0.0230f;   // yaw D gain — differentiates filtered yaw_rate
 float YAW_EMA_ALPHA = 0.90f;   // gyro.z EMA smoothing (0=frozen, 1=raw)
 
@@ -48,6 +49,7 @@ const int   LOOP_INTERVAL_MS    = 5;      // ms
 const float LOOP_INTERVAL_S     = 0.005f; // s
 const int   STEPPER_INTERVAL_US = 50;     // µs — 20 kHz ISR
 const int   PRINT_INTERVAL_MS   = 2000;   // ms
+const int   BATTERY_INTERVAL_MS = 5000;   // ms
 
 // ─────────────────────────────────────────────────────────────────
 //  Pins
@@ -58,6 +60,44 @@ const int STEPPER2_DIR_PIN  = 4;
 const int STEPPER2_STEP_PIN = 14;
 const int STEPPER_EN_PIN    = 15;
 const int TOGGLE_PIN        = 32;
+
+// MCP3208 ADC (SPI)
+const int ADC_CS_PIN        = 5;
+const int ADC_SCK_PIN       = 18;
+const int ADC_MISO_PIN      = 19;
+const int ADC_MOSI_PIN      = 23;
+
+// ─────────────────────────────────────────────────────────────────
+//  Battery hardware constants
+// ─────────────────────────────────────────────────────────────────
+const uint8_t CH_VB         = 0;   // MCP3208 channel: battery voltage divider
+const uint8_t CH_IMOTOR     = 1;   // MCP3208 channel: INA180A1 motor current
+const uint8_t CH_ILOGIC     = 2;   // MCP3208 channel: INA180A3 logic current
+
+const float VREF            = 4.096f;  // LM4040 precision reference
+const float ADC_MAX         = 4095.0f;
+
+const float VB_RATIO        = 10000.0f / (47000.0f + 10000.0f);  // 47k/10k divider
+const float SCALE_MOTOR     = 20.0f  * 0.1f;   // INA180A1: gain=20, shunt=0.1Ω
+const float SCALE_LOGIC     = 100.0f * 0.01f;  // INA180A3: gain=100, shunt=0.01Ω
+const float C_NOM_AH        = 2.0f;            // 2×7.2V NiMH in series, 2.0Ah
+
+// NiMH OCV → SoC lookup table (used once at boot for seeding)
+const int N_TAB = 26;
+const float V_TAB[N_TAB] = {
+    14.880f, 14.340f, 13.800f, 13.500f, 13.200f, 13.104f,
+    13.020f, 12.960f, 12.900f, 12.840f, 12.780f, 12.744f,
+    12.720f, 12.684f, 12.660f, 12.660f, 12.660f, 12.504f,
+    12.360f, 12.180f, 12.000f, 11.640f, 11.280f, 10.860f,
+    10.440f,  9.600f
+};
+const float SOC_TAB[N_TAB] = {
+    100.0f, 96.0f, 92.0f, 88.0f, 84.0f, 80.0f,
+     76.0f, 72.0f, 68.0f, 64.0f, 60.0f, 56.0f,
+     52.0f, 48.0f, 44.0f, 40.0f, 36.0f, 32.0f,
+     28.0f, 24.0f, 20.0f, 16.0f, 12.0f,  8.0f,
+      4.0f,  0.0f
+};
 
 // ─────────────────────────────────────────────────────────────────
 //  Live telemetry globals (read by web /status endpoint)
@@ -80,6 +120,19 @@ float yawCorrection = 0.0f; // yaw controller output applied to motors — telem
 float yawIntegral   = 0.0f; // yaw I accumulator
 float prevYawRate   = 0.0f; // previous yaw_rate for D term
 unsigned long lastEspNowMs = 0; // timestamp of last ESP-NOW command (0 = never received)
+
+// ─────────────────────────────────────────────────────────────────
+//  Battery state
+// ─────────────────────────────────────────────────────────────────
+float         SoC      = 100.0f;  // state of charge (%), Coulomb-counted after boot
+float         Qused_Ah = 0.0f;    // charge drawn since boot (Ah)
+float         I_prev   = 0.0f;    // previous total current for trapezoidal integration
+float         bat_vbat   = 0.0f;
+float         bat_imotor = 0.0f;
+float         bat_ilogic = 0.0f;
+float         bat_power  = 0.0f;
+float         bat_energy = 0.0f;
+float         bat_trem   = 999.0f;
 
 // ─────────────────────────────────────────────────────────────────
 //  Web tuner
@@ -130,6 +183,46 @@ void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len) {
     lastEspNowMs  = millis();
 }
 
+// ─────────────────────────────────────────────────────────────────
+//  Battery sensing helpers
+// ─────────────────────────────────────────────────────────────────
+uint16_t readADC(uint8_t ch)
+{
+    uint8_t tx0 = 0x06 | (ch >> 2);
+    uint8_t tx1 = (ch & 0x03) << 6;
+    digitalWrite(ADC_CS_PIN, LOW);
+    SPI.transfer(tx0);
+    uint8_t rx0 = SPI.transfer(tx1);
+    uint8_t rx1 = SPI.transfer(0x00);
+    digitalWrite(ADC_CS_PIN, HIGH);
+    return ((rx0 & 0x0F) << 8) | rx1;
+}
+
+float readBatteryVolts()
+{
+    return (readADC(CH_VB) / ADC_MAX * VREF) / VB_RATIO;
+}
+
+float readMotorAmps()
+{
+    return max(0.0f, (readADC(CH_IMOTOR) / ADC_MAX * VREF) / SCALE_MOTOR);
+}
+
+float readLogicAmps()
+{
+    return max(0.0f, (readADC(CH_ILOGIC) / ADC_MAX * VREF) / SCALE_LOGIC);
+}
+
+float lookupSoC(float Vpack)
+{
+    if (Vpack >= V_TAB[0])        return 100.0f;
+    if (Vpack <= V_TAB[N_TAB-1])  return   0.0f;
+    int i = 0;
+    while (Vpack < V_TAB[i + 1]) i++;
+    float frac = (V_TAB[i] - Vpack) / (V_TAB[i] - V_TAB[i + 1]);
+    return SOC_TAB[i] + frac * (SOC_TAB[i + 1] - SOC_TAB[i]);
+}
+
 void calibrate()
 {
     float gyroSum  = 0.0f;
@@ -167,6 +260,10 @@ void setup()
 
     Wire.begin(21, 22);
     Wire.setClock(100000);  // 100 kHz — robust under ISR interruptions
+
+    pinMode(ADC_CS_PIN, OUTPUT);
+    digitalWrite(ADC_CS_PIN, HIGH);
+    SPI.begin(ADC_SCK_PIN, ADC_MISO_PIN, ADC_MOSI_PIN, ADC_CS_PIN);
 
     if (!mpu.begin()) {
         Serial.println("MPU6050 not found — check wiring");
@@ -273,26 +370,45 @@ void setup()
     server.on("/status", [](){
         uint32_t upSec    = millis() / 1000;
         uint32_t calSec   = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
-        char buf[740];
+        char buf[900];
         snprintf(buf, sizeof(buf),
             "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
             "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
             "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
             "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
             "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
-            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f}",
+            "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
+            "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f}",
             theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
             Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
             gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
             velEst, velTarget, tiltSP, velIntegral,
             Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
-            yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ);
+            yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
+            SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem);
         server.send(200, "application/json", buf);
     });
     server.begin();
     xTaskCreatePinnedToCore(
         [](void*){ for(;;){ server.handleClient(); vTaskDelay(1); } },
         "web", 8192, nullptr, 1, nullptr, 0);
+
+    // ── Battery SoC seed from OCV ─────────────────────────────────
+    // Motors not yet running → battery at rest → voltage is reliable.
+    // Wait until a valid NiMH voltage appears (guards against power-off boot).
+    {
+        float Vboot;
+        do {
+            Vboot = readBatteryVolts();
+            if (Vboot < V_TAB[N_TAB-1])
+                Serial.printf("Battery not ready (%.2fV), waiting...\n", Vboot);
+            delay(500);
+        } while (Vboot < V_TAB[N_TAB-1]);
+        SoC      = lookupSoC(Vboot);
+        Qused_Ah = C_NOM_AH * (1.0f - SoC / 100.0f);
+        I_prev   = 0.0f;
+        Serial.printf("Battery: %.2fV  SoC=%.1f%%  Qused=%.3fAh\n", Vboot, SoC, Qused_Ah);
+    }
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -308,6 +424,7 @@ void loop()
 {
     static unsigned long loopTimer  = 0;
     static unsigned long printTimer = 0;
+    static unsigned long battTimer  = 0;
 
     // ── Serial command parser ──────────────────────────────────────
     if (Serial.available()) {
@@ -526,6 +643,52 @@ void loop()
         tiltSP = constrain(rawLean, -MAX_TILT_SP, MAX_TILT_SP);
     }
 
+    // ── Battery monitoring at 0.2 Hz (every 5 s) ─────────────────
+    if (millis() - battTimer >= BATTERY_INTERVAL_MS) {
+        battTimer += BATTERY_INTERVAL_MS;
+
+        float Vpack   = readBatteryVolts();
+        float Imotor  = readMotorAmps();
+        float Ilogic  = readLogicAmps();
+        float I_total = Imotor + Ilogic;
+
+        float dt_h   = BATTERY_INTERVAL_MS / 3600000.0f;
+        Qused_Ah    += 0.5f * (I_prev + I_total) * dt_h;  // trapezoidal
+        I_prev       = I_total;
+
+        SoC = constrain(100.0f - (Qused_Ah / C_NOM_AH * 100.0f), 0.0f, 100.0f);
+
+        // Re-seed if a bad boot left us stuck at 0% with a valid voltage
+        if (SoC <= 0.0f && Vpack >= V_TAB[N_TAB-1]) {
+            SoC      = lookupSoC(Vpack);
+            Qused_Ah = C_NOM_AH * (1.0f - SoC / 100.0f);
+            I_prev   = 0.0f;
+            Serial.printf("[BAT] Reseeded: %.2fV → %.1f%%\n", Vpack, SoC);
+        }
+
+        float P_watts     = Vpack * I_total;
+        float E_remain_Wh = (SoC / 100.0f) * C_NOM_AH * Vpack;
+        float t_remain_min = (I_total > 0.01f)
+            ? (SoC / 100.0f * C_NOM_AH) / I_total * 60.0f
+            : 999.0f;
+
+        bat_vbat   = Vpack;
+        bat_imotor = Imotor;
+        bat_ilogic = Ilogic;
+        bat_power  = P_watts;
+        bat_energy = E_remain_Wh;
+        bat_trem   = t_remain_min;
+
+        if (Vpack < V_TAB[N_TAB-1]) {
+            Serial.println("[BAT] Waiting for battery...");
+        } else {
+            Serial.printf("[BAT] Vb=%.2fV Im=%.3fA Il=%.3fA Itot=%.3fA SoC=%.1f%% P=%.2fW E=%.2fWh t=%.0fmin\n",
+                Vpack, Imotor, Ilogic, I_total, SoC, P_watts, E_remain_Wh, t_remain_min);
+            Serial.printf("DATA:%.1f:%.2f:%.0f:%.2f:%.2f\n",
+                SoC, P_watts, t_remain_min, Vpack, E_remain_Wh);
+        }
+    }
+
     // ── Diagnostics at 2 Hz ───────────────────────────────────────
     if (millis() - printTimer >= PRINT_INTERVAL_MS) {
         printTimer += PRINT_INTERVAL_MS;
@@ -537,3 +700,5 @@ void loop()
                       yaw_rate, yawCorrection, yawIntegral, Kp_yaw, Ki_yaw, Kd_yaw);
     }
 }
+
+
