@@ -54,8 +54,8 @@ const int   BATTERY_INTERVAL_MS = 5000;   // ms
 // ─────────────────────────────────────────────────────────────────
 //  Pins
 // ─────────────────────────────────────────────────────────────────
-const int STEPPER1_DIR_PIN  = 16;
-const int STEPPER1_STEP_PIN = 17;
+const int STEPPER1_DIR_PIN  = 27;
+const int STEPPER1_STEP_PIN = 26;
 const int STEPPER2_DIR_PIN  = 4;
 const int STEPPER2_STEP_PIN = 14;
 const int STEPPER_EN_PIN    = 15;
