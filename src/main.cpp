@@ -21,7 +21,7 @@ float CF_COEFF = 0.996f;
 float       maxWheelSpeed    = 19.0f;  // rad/s — hardware ceiling (tunable: mw)
 float       motorAccel       = 30.0f; // rad/s² — stepper slew rate  (tunable: ac)
 const float MAX_INTEGRAL     = 0.1f;   // anti-windup clamp
-const float FALL_ANGLE       = 0.8f;   // rad (~46°) — give up balancing
+const float FALL_ANGLE       = 0.4f;   // rad (~23°) — give up balancing
 
 
 float MAX_TILT_SP    = 0.1f;  // outer loop output clamp (rad)
@@ -30,8 +30,8 @@ float Kp_vel         = 0.005f;  // velocity P gain: velErr (rad/s) → tiltSP (r
 float Ki_vel         = 0.001f;  // velocity I gain
 float VEL_STEP       = 1.0f;    // rad/s per button press
 float MAX_VEL_TARGET = 9.5f;    // rad/s ceiling on velTarget
-float TURN_STEP      = 0.1f;    // rad/s added to turnBias per A/D press
-float MAX_TURN_BIAS  = 2.0f;    // rad/s — turnBias ceiling
+float TURN_STEP      = 1.0f;    // rad/s added to turnBias per A/D press
+float MAX_TURN_BIAS  = 3.0f;    // rad/s — turnBias ceiling
 
 float velTarget   = 0.0f;  // commanded velocity (rad/s)
 float velIntegral = 0.0f;  // velocity I accumulator
@@ -72,6 +72,7 @@ uint32_t      imuErrCount = 0;
 uint32_t      lastCalibMs   = 0;
 uint32_t      lastTurnCmdMs = 0;
 volatile bool calibrating = false;  // raised by web handler; main loop yields I2C
+bool          fallen      = false;  // true while tipped past FALL_ANGLE
 unsigned long lastLoopUs  = 0;      // tracks micros() of last control tick
 float gyroBiasZ   = 0.0f;  // gyro.z offset measured at calibration
 float yaw_rate    = 0.0f;  // EMA-filtered bias-corrected gyro.z (rad/s) — telemetry
@@ -151,6 +152,7 @@ void calibrate()
     yawCorrection = 0.0f;
     yawIntegral   = 0.0f;
     prevYawRate   = 0.0f;
+    fallen        = false;
     lastCalibMs   = millis();
     Serial.printf("Calibrated — bias_y=%.4f  bias_z=%.4f  balance=%.4f rad (%.2f deg)\n",
                   gyroBias, gyroBiasZ, BALANCE_ANGLE, BALANCE_ANGLE * 180.0f / PI);
@@ -399,10 +401,25 @@ void loop()
         theta = (1.0f - CF_COEFF) * accel_angle
               + CF_COEFF * (theta + gyro_rate * dt);
 
-        // 3. Fall detection — disable motors if tipped too far
-        if (fabsf(theta) > FALL_ANGLE) {
-            step1.setTargetSpeedRad(0.0f);
-            step2.setTargetSpeedRad(0.0f);
+        // 3. Fall detection
+        if (fabsf(theta) > FALL_ANGLE) fallen = true;
+
+        if (fallen) {
+            theta = accel_angle;  // bypass CF — snap to accelerometer
+            if (fabsf(theta) >= FALL_ANGLE) {
+                step1.setTargetSpeedRad(0.0f);
+                step2.setTargetSpeedRad(0.0f);
+                velTarget   = 0.0f;
+                velIntegral = 0.0f;
+                velEst      = 0.0f;
+                tiltSP      = 0.0f;
+                integral    = 0.0f;
+                yawIntegral = 0.0f;
+                prevYawRate = 0.0f;
+                return;
+            }
+            // accel says we're upright — clear fallen state and resume on this tick
+            fallen      = false;
             velTarget   = 0.0f;
             velIntegral = 0.0f;
             velEst      = 0.0f;
@@ -410,7 +427,6 @@ void loop()
             integral    = 0.0f;
             yawIntegral = 0.0f;
             prevYawRate = 0.0f;
-            return;
         }
 
         // 4. Tilt setpoint
