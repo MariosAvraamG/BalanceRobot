@@ -1,0 +1,20 @@
+#pragma once
+
+// ── Pins ──────────────────────────────────────────────────────────
+const int STEPPER1_DIR_PIN  = 27;
+const int STEPPER1_STEP_PIN = 26;
+const int STEPPER2_DIR_PIN  = 4;
+const int STEPPER2_STEP_PIN = 14;
+const int STEPPER_EN_PIN    = 15;
+const int TOGGLE_PIN        = 32;
+#define   UART_RX_PIN       16
+
+// ── Timing ────────────────────────────────────────────────────────
+const int   LOOP_INTERVAL_MS    = 5;
+const float LOOP_INTERVAL_S     = 0.005f;
+const int   STEPPER_INTERVAL_US = 50;
+const int   PRINT_INTERVAL_MS   = 2000;
+
+// ── Fixed control limits ──────────────────────────────────────────
+const float MAX_INTEGRAL = 0.1f;
+const float FALL_ANGLE   = 0.4f;
