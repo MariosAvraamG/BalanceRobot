@@ -2,11 +2,12 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "config.h"
+#include "globals.h"
 
 // IR2=ch2 (left), IR3=ch1 (centre), IR4=ch0 (right)
-static const uint8_t NUM_SENSORS            = 3;
-static const uint8_t SENSOR_CH[NUM_SENSORS] = {2, 1, 0};
-static const int     SETPOINT               = 1000;  // centre of 0–2000 range
+static const uint8_t NUM_SENSORS            = 5;
+static const uint8_t SENSOR_CH[NUM_SENSORS] = {3, 2, 1, 0, 4};  // right → left (0 = hard right, 4000 = hard left)
+static const int     SETPOINT               = 2000;  // centre of 0–4000 range
 
 static const float KP = 0.5f;
 static const float KI = 0.0f;
@@ -38,12 +39,14 @@ static void calibrateIR()
         calMax[i] = 0;
     }
     unsigned long start = millis();
+    int iter = 0;
     while (millis() - start < 5000) {
         for (uint8_t i = 0; i < NUM_SENSORS; i++) {
             uint16_t v = readADC(SENSOR_CH[i]);
             if (v < calMin[i]) calMin[i] = v;
             if (v > calMax[i]) calMax[i] = v;
         }
+        if (++iter % 100 == 0) vTaskDelay(1);
     }
 }
 
@@ -82,14 +85,24 @@ static float computePID(int position)
     return proportional * KP + irIntegral * KI + derivative * KD;
 }
 
-void sensorsInit()
+void sensorsBegin()
 {
     pinMode(ADC_CS_PIN, OUTPUT);
     digitalWrite(ADC_CS_PIN, HIGH);
     SPI.begin(ADC_SCK_PIN, ADC_MISO_PIN, ADC_MOSI_PIN, ADC_CS_PIN);
+}
+
+void sensorsCalibrateIR()
+{
     Serial.println("IR calibrating — sweep sensors over line for 5 seconds...");
     calibrateIR();
     Serial.println("IR calibration done.");
+}
+
+void sensorsInit()
+{
+    sensorsBegin();
+    sensorsCalibrateIR();
 }
 
 void printIR()
@@ -103,4 +116,43 @@ void printIR()
 
     Serial.print("pos="); Serial.print(position);
     Serial.print("  pid="); Serial.println(pidOutput, 2);
+}
+
+void lineFollowUpdate()
+{
+    static bool  prevMode   = false;
+    static float lfIntegral = 0.0f;
+    static int   lfLastProp = 0;
+    static unsigned long lfTimer = 0;
+
+    if (lineFollowMode && !prevMode) {
+        lfIntegral = 0.0f;
+        lfLastProp = 0;
+    }
+    prevMode = lineFollowMode;
+
+    if (!lineFollowMode) return;
+
+    if (millis() - lfTimer < 20) return;
+    lfTimer += 20;
+
+    int pos = readLinePosition();
+    irPosition = (float)pos;
+
+    if (pos == -1) {
+        irSteering = 0.0f;
+    } else {
+        int proportional = pos - SETPOINT;  // SETPOINT shared with printIR
+        int derivative   = proportional - lfLastProp;
+        lfLastProp       = proportional;
+        lfIntegral      += proportional * 0.020f;
+        irSteering = proportional * Kp_ir
+                   + lfIntegral   * Ki_ir
+                   + derivative   * Kd_ir;
+    }
+
+    velTarget    = lineFollowSpeed;
+    turnBias     = constrain(-irSteering, -MAX_TURN_BIAS, MAX_TURN_BIAS);
+    lastEspNowMs = millis();
+    lastTurnCmdMs= millis();
 }

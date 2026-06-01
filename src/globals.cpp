@@ -52,3 +52,11 @@ bool          fallen      = false;
 unsigned long lastLoopUs  = 0;
 unsigned long lastEspNowMs  = 0;
 unsigned long lastUartMs    = 0;
+
+bool  lineFollowMode  = false;
+float lineFollowSpeed = 2.0f;
+float Kp_ir           = 0.004f;
+float Ki_ir           = 0.0f;
+float Kd_ir           = 0.001f;
+float irPosition      = -1.0f;
+float irSteering      = 0.0f;

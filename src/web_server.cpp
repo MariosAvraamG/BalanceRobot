@@ -8,6 +8,7 @@
 #include "config.h"
 #include "motors.h"
 #include "imu.h"
+#include "sensors.h"
 
 static WebServer server(80);
 
@@ -41,7 +42,34 @@ static void handleSet()
         step1.setAccelerationRad(motorAccel);
         step2.setAccelerationRad(motorAccel);
     }
+    if (server.hasArg("lfs"))  lineFollowSpeed = server.arg("lfs").toFloat();
+    if (server.hasArg("kpir")) Kp_ir           = server.arg("kpir").toFloat();
+    if (server.hasArg("kiir")) Ki_ir           = server.arg("kiir").toFloat();
+    if (server.hasArg("kdir")) Kd_ir           = server.arg("kdir").toFloat();
     server.send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleCalibrateIR()
+{
+    lineFollowMode = false;
+    velTarget      = 0.0f;
+    turnBias       = 0.0f;
+    sensorsCalibrateIR();
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleLineFollow()
+{
+    if (server.hasArg("en")) {
+        lineFollowMode = server.arg("en").toInt() != 0;
+        if (!lineFollowMode) {
+            velTarget = 0.0f;
+            turnBias  = 0.0f;
+        }
+    }
+    char buf[48];
+    snprintf(buf, sizeof(buf), "{\"ok\":true,\"lf\":%d}", (int)lineFollowMode);
+    server.send(200, "application/json", buf);
 }
 
 static void handleMove()
@@ -86,20 +114,22 @@ static void handleStatus()
 {
     uint32_t upSec  = millis() / 1000;
     uint32_t calSec = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
-    char buf[740];
+    char buf[900];
     snprintf(buf, sizeof(buf),
         "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
         "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
         "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
         "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
         "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
-        "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f}",
+        "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
+        "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f}",
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
         Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
         gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
         velEst, velTarget, tiltSP, velIntegral,
         Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
-        yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ);
+        yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
+        (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir);
     server.send(200, "application/json", buf);
 }
 
@@ -110,14 +140,16 @@ void webServerInit()
     Serial.printf("Web tuner: connect to WiFi 'BalanceBot2' then open http://%s\n",
                   WiFi.softAPIP().toString().c_str());
 
-    server.on("/",          handleRoot);
-    server.on("/set",       handleSet);
-    server.on("/move",      handleMove);
-    server.on("/calibrate", handleCalibrate);
-    server.on("/status",    handleStatus);
+    server.on("/",           handleRoot);
+    server.on("/set",        handleSet);
+    server.on("/move",       handleMove);
+    server.on("/calibrate",  handleCalibrate);
+    server.on("/status",     handleStatus);
+    server.on("/linefollow",   handleLineFollow);
+    server.on("/calibrateIR",  handleCalibrateIR);
     server.begin();
 
     xTaskCreatePinnedToCore(
         [](void*){ for(;;){ server.handleClient(); vTaskDelay(1); } },
-        "web", 8192, nullptr, 1, nullptr, 0);
+        "web", 12288, nullptr, 1, nullptr, 0);
 }

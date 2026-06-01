@@ -56,3 +56,12 @@ extern bool          fallen;
 extern unsigned long lastLoopUs;
 extern unsigned long lastEspNowMs;
 extern unsigned long lastUartMs;
+
+// ── Line follow ───────────────────────────────────────────────────
+extern bool  lineFollowMode;
+extern float lineFollowSpeed;
+extern float Kp_ir;
+extern float Ki_ir;
+extern float Kd_ir;
+extern float irPosition;
+extern float irSteering;

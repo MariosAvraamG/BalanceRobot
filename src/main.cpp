@@ -16,7 +16,7 @@ void setup()
     imuInit();         // Wire, MPU6050
     webServerInit();   // WiFi AP, routes, web task on core 0
     espNowInit();      // ESP-NOW (requires WiFi to be up first)
-    sensorsInit();     // SPI ADC + IR sensors
+    sensorsBegin();    // SPI ADC hardware init (IR calibration done via web UI)
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -45,6 +45,7 @@ void loop()
         if (!controlTick(dt)) return;
     }
 
+    lineFollowUpdate();
     velLoopUpdate();
     deadManCheck();
     printDiagnostics();

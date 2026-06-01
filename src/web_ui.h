@@ -11,7 +11,7 @@ html,body{height:100%;margin:0}
 body{font-family:monospace;padding:6px 10px;background:#111;color:#ddd;overflow:hidden}
 h2{color:#4af;margin:0 0 6px;font-size:15px}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;height:calc(100vh - 34px)}
-.col{display:flex;flex-direction:column;gap:6px}
+.col{display:flex;flex-direction:column;gap:6px;overflow-y:auto}
 .card{background:#1e1e1e;border-radius:6px;padding:6px 10px}
 .card b{color:#4af;font-size:11px;letter-spacing:.05em}
 .row{display:flex;align-items:center;margin:4px 0;gap:6px}
@@ -101,17 +101,38 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
         <button class="dbtn" onpointerdown="startDiag('sd')" onpointerup="stopDiag()" onpointerleave="stopDiag()">&#8600;</button>
       </div>
     </div>
+    <div class="card"><b>LINE FOLLOW</b>
+      <div class="row"><label>Speed</label><input type="range" id="lfs" min="0" max="21.6" step="0.3" oninput="sendCms('lfs',this.value)"><span class="val" id="lfs_v">—</span></div>
+      <div class="row"><label>Kp IR</label><input type="range" id="kpir" min="0" max="0.02" step="0.0001" oninput="send('kpir',this.value)"><span class="val" id="kpir_v">—</span></div>
+      <div class="row"><label>Kd IR</label><input type="range" id="kdir" min="0" max="0.005" step="0.00005" oninput="send('kdir',this.value)"><span class="val" id="kdir_v">—</span></div>
+      <div class="tele" style="margin:4px 0">
+        <div><span class="k">IR pos  </span><span class="v" id="t_ip">—</span></div>
+        <div><span class="k">IR corr </span><span class="v" id="t_ic">—</span></div>
+      </div>
+      <button class="cbtn" id="ir_cal_btn" onclick="doCalibrateIR()">Calibrate IR Sensors</button>
+      <button class="cbtn" id="lf_btn" onclick="toggleLF()">Enable Line Follow</button>
+    </div>
   </div>
 </div>
 <script>
 function send(p,v){
-  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir'||p==='kdir')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
 function sendCms(p,v){
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(1)+' cm/s';
   fetch('/set?'+p+'='+(parseFloat(v)/3));
+}
+function toggleLF(){
+  var en=document.getElementById('lf_btn').dataset.on!=='1';
+  fetch('/linefollow?en='+(en?1:0)).then(function(r){return r.json();}).then(function(d){setLFBtn(d.lf);});
+}
+function setLFBtn(on){
+  var b=document.getElementById('lf_btn');
+  b.dataset.on=on?'1':'0';
+  if(on){b.textContent='Disable Line Follow';b.style.color='#f55';b.style.borderColor='#f55';}
+  else{b.textContent='Enable Line Follow';b.style.color='#4af';b.style.borderColor='#4af';}
 }
 var inited=false;
 function poll(){
@@ -128,17 +149,20 @@ function poll(){
     document.getElementById('t_yr').textContent=(d.yaw_rate||0).toFixed(4)+' r/s';
     document.getElementById('t_yc').textContent=(d.yawCorr||0).toFixed(4)+' r/s';
     document.getElementById('t_yt').textContent=(d.turnBias||0).toFixed(3)+' r/s';
+    document.getElementById('t_ip').textContent=(d.irPos>=0)?d.irPos.toFixed(0):'none';
+    document.getElementById('t_ic').textContent=(d.irCorr||0).toFixed(4);
+    setLFBtn(d.lf||false);
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea'].forEach(function(p){
-        document.getElementById(p).value=d[p];
-        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
-        document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
+      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea','kpir','kdir'].forEach(function(p){
+        document.getElementById(p).value=d[p]||0;
+        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kdir')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+        document.getElementById(p+'_v').textContent=parseFloat(d[p]||0).toFixed(dp);
       });
-      ['mw','mvt'].forEach(function(p){
-        var cms=d[p]*3;
+      ['mw','mvt','lfs'].forEach(function(p){
+        var cms=(d[p]||0)*3;
         document.getElementById(p).value=cms;
         document.getElementById(p+'_v').textContent=cms.toFixed(1)+' cm/s';
       });
@@ -176,6 +200,15 @@ function doCalibrate(){
     b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
   }).catch(function(){
     b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  });
+}
+function doCalibrateIR(){
+  var b=document.getElementById('ir_cal_btn');
+  b.textContent='Calibrating IR… (5s)';b.disabled=true;
+  fetch('/calibrateIR').then(function(){
+    b.textContent='Calibrate IR Sensors';b.disabled=false;
+  }).catch(function(){
+    b.textContent='Calibrate IR Sensors';b.disabled=false;
   });
 }
 setInterval(poll,500);poll();
