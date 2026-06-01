@@ -14,6 +14,14 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
     turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
     lastTurnCmdMs = millis();
     lastEspNowMs  = millis();
+
+    static unsigned long lastPrintMs = 0;
+    if (millis() - lastPrintMs >= 500) {
+        lastPrintMs = millis();
+        Serial.printf("[ESP-NOW] lin=%.2f  ang=%.2f  from %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      cmd.linear_vel, cmd.angular_vel,
+                      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
 }
 
 void commsInit()

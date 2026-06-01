@@ -15,6 +15,12 @@ const float LOOP_INTERVAL_S     = 0.005f;
 const int   STEPPER_INTERVAL_US = 50;
 const int   PRINT_INTERVAL_MS   = 2000;
 
+// ── SPI / ADC (MCP3204) ───────────────────────────────────────────
+const int ADC_CS_PIN   = 5;
+const int ADC_SCK_PIN  = 18;
+const int ADC_MISO_PIN = 19;
+const int ADC_MOSI_PIN = 23;
+
 // ── Fixed control limits ──────────────────────────────────────────
 const float MAX_INTEGRAL = 0.1f;
 const float FALL_ANGLE   = 0.4f;

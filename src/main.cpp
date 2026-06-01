@@ -6,6 +6,7 @@
 #include "comms.h"
 #include "control.h"
 #include "web_server.h"
+#include "sensors.h"
 
 void setup()
 {
@@ -15,6 +16,7 @@ void setup()
     imuInit();         // Wire, MPU6050
     webServerInit();   // WiFi AP, routes, web task on core 0
     espNowInit();      // ESP-NOW (requires WiFi to be up first)
+    sensorsInit();     // SPI ADC + IR sensors
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -46,4 +48,5 @@ void loop()
     velLoopUpdate();
     deadManCheck();
     printDiagnostics();
+    printIR();
 }
