@@ -9,17 +9,13 @@ static ESP32Timer ITimer(3);
 
 static bool IRAM_ATTR TimerHandler(void*)
 {
-    static bool tog = false;
     step1.runStepper();
     step2.runStepper();
-    digitalWrite(TOGGLE_PIN, tog);
-    tog = !tog;
     return true;
 }
 
 void motorsInit()
 {
-    pinMode(TOGGLE_PIN,     OUTPUT);
     pinMode(STEPPER_EN_PIN, OUTPUT);
     digitalWrite(STEPPER_EN_PIN, LOW);
 
