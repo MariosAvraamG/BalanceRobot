@@ -53,6 +53,14 @@ unsigned long lastLoopUs  = 0;
 unsigned long lastEspNowMs  = 0;
 unsigned long lastUartMs    = 0;
 
+float SoC        = 100.0f;
+float bat_vbat   = 0.0f;
+float bat_imotor = 0.0f;
+float bat_ilogic = 0.0f;
+float bat_power  = 0.0f;
+float bat_energy = 0.0f;
+float bat_trem   = 999.0f;
+
 bool  lineFollowMode  = false;
 float lineFollowSpeed = 2.0f;
 float Kp_ir           = 0.004f;

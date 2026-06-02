@@ -57,6 +57,15 @@ extern unsigned long lastLoopUs;
 extern unsigned long lastEspNowMs;
 extern unsigned long lastUartMs;
 
+// ── Battery telemetry ─────────────────────────────────────────────
+extern float SoC;
+extern float bat_vbat;
+extern float bat_imotor;
+extern float bat_ilogic;
+extern float bat_power;
+extern float bat_energy;
+extern float bat_trem;
+
 // ── Line follow ───────────────────────────────────────────────────
 extern bool  lineFollowMode;
 extern float lineFollowSpeed;

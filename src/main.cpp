@@ -7,6 +7,7 @@
 #include "control.h"
 #include "web_server.h"
 #include "sensors.h"
+#include "power.h"
 
 void setup()
 {
@@ -17,6 +18,7 @@ void setup()
     webServerInit();   // WiFi AP, routes, web task on core 0
     espNowInit();      // ESP-NOW (requires WiFi to be up first)
     sensorsBegin();    // SPI ADC hardware init (IR calibration done via web UI)
+    powerInit();       // ADC pins, OCV seed — motors at rest so voltage is reliable
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -48,6 +50,7 @@ void loop()
     lineFollowUpdate();
     velLoopUpdate();
     deadManCheck();
+    powerUpdate();
     printDiagnostics();
     printIR();
 }

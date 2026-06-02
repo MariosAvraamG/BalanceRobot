@@ -29,6 +29,8 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
 .cbtn{width:100%;margin-top:6px;padding:6px;background:#1a1a2e;border:1px solid #4af;border-radius:4px;color:#4af;font-family:monospace;font-size:11px;cursor:pointer}
 .cbtn:active{background:#4af;color:#111}
 .cbtn:disabled{opacity:.5;cursor:default}
+.bat-wrap{background:#333;border-radius:3px;height:8px;margin:4px 0 2px;overflow:hidden}
+.bat-bar{height:100%;width:0%;background:#4f4;border-radius:3px;transition:width .5s,background .5s}
 </style></head><body>
 <h2>BalanceBot Tuner</h2>
 <div class="grid">
@@ -54,6 +56,19 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
       <b>SYSTEM</b>
       <div class="tele">
         <div><span class="k">IMU </span><span class="v" id="s_imu">—</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <b>BATTERY</b>
+      <div class="bat-wrap"><div class="bat-bar" id="bat_bar"></div></div>
+      <div class="tele">
+        <div><span class="k">SoC    </span><span class="v" id="b_soc">—</span></div>
+        <div><span class="k">Voltage</span><span class="v" id="b_vbat">—</span></div>
+        <div><span class="k">I motor</span><span class="v" id="b_im">—</span></div>
+        <div><span class="k">I logic</span><span class="v" id="b_il">—</span></div>
+        <div><span class="k">Power  </span><span class="v" id="b_pw">—</span></div>
+        <div><span class="k">Energy </span><span class="v" id="b_en">—</span></div>
+        <div><span class="k">t rem  </span><span class="v" id="b_tr">—</span></div>
       </div>
     </div>
   </div>
@@ -152,6 +167,17 @@ function poll(){
     document.getElementById('t_ip').textContent=(d.irPos>=0)?d.irPos.toFixed(0):'none';
     document.getElementById('t_ic').textContent=(d.irCorr||0).toFixed(4);
     setLFBtn(d.lf||false);
+    var soc=d.soc!=null?d.soc:0;
+    document.getElementById('b_soc').textContent=soc.toFixed(1)+'%';
+    document.getElementById('b_vbat').textContent=(d.vbat||0).toFixed(2)+' V';
+    document.getElementById('b_im').textContent=(d.imotor||0).toFixed(3)+' A';
+    document.getElementById('b_il').textContent=(d.ilogic||0).toFixed(3)+' A';
+    document.getElementById('b_pw').textContent=(d.power||0).toFixed(2)+' W';
+    document.getElementById('b_en').textContent=(d.energy||0).toFixed(2)+' Wh';
+    document.getElementById('b_tr').textContent=d.trem>=999?'—':(d.trem||0).toFixed(0)+' min';
+    var bar=document.getElementById('bat_bar');
+    bar.style.width=Math.min(soc,100)+'%';
+    bar.style.background=soc>50?'#4f4':soc>20?'#fa4':'#f44';
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';

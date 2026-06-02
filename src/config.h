@@ -21,6 +21,12 @@ const int ADC_SCK_PIN  = 18;
 const int ADC_MISO_PIN = 19;
 const int ADC_MOSI_PIN = 23;
 
+// ── Battery sensing (ESP32 internal ADC, GPIO 33/34/35) ──────────
+const int BAT_PIN_VBAT   = 33;
+const int BAT_PIN_IMOTOR = 34;
+const int BAT_PIN_ILOGIC = 35;
+const int BATTERY_INTERVAL_MS = 5000;
+
 // ── Fixed control limits ──────────────────────────────────────────
 const float MAX_INTEGRAL = 0.1f;
 const float FALL_ANGLE   = 0.4f;
