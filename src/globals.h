@@ -74,3 +74,6 @@ extern float Ki_ir;
 extern float Kd_ir;
 extern float irPosition;
 extern float irSteering;
+extern float lfLostSpeedFrac;  // speed fraction (0–1) when line is lost
+extern float lfVelScale;       // error magnitude (counts) at which speed bottoms out
+extern float lfMinSpeedFrac;   // minimum speed fraction (0–1) on sharp curves

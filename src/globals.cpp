@@ -2,11 +2,11 @@
 
 float Kp            = 2100.0f;
 float Kd            =  240.0f;
-float Ki            =    1.0f;
+float Ki            =    9.0f;
 float BALANCE_ANGLE =   0.06f;
 float CF_COEFF      =  0.996f;
 
-float maxWheelSpeed  = 19.0f;
+float maxWheelSpeed  = 7.0f;
 float motorAccel     = 30.0f;
 
 float MAX_TILT_SP    = 0.115f;
@@ -14,12 +14,12 @@ float EMA_ALPHA      = 0.90f;
 float Kp_vel         = 0.007f;
 float Ki_vel         = 0.001f;
 float VEL_STEP       = 1.0f;
-float MAX_VEL_TARGET = 7.2f;
+float MAX_VEL_TARGET = 5.0f;
 float TURN_STEP      = 1.0f;
-float MAX_TURN_BIAS  = 5.0f;
+float MAX_TURN_BIAS  = 9.0f;
 
-float Kp_yaw        = 0.180f;
-float Ki_yaw        = 0.0100f;
+float Kp_yaw        = 0.330f;
+float Ki_yaw        = 0.070f;
 float Kd_yaw        = 0.0230f;
 float YAW_EMA_ALPHA = 0.90f;
 
@@ -62,9 +62,12 @@ float bat_energy = 0.0f;
 float bat_trem   = 999.0f;
 
 bool  lineFollowMode  = false;
-float lineFollowSpeed = 2.0f;
-float Kp_ir           = 0.004f;
-float Ki_ir           = 0.0f;
-float Kd_ir           = 0.001f;
+float lineFollowSpeed = 1.2f;
+float Kp_ir           = 0.075f;
+float Ki_ir           = 0.005f;
+float Kd_ir           = 0.00008f;
 float irPosition      = -1.0f;
 float irSteering      = 0.0f;
+float lfLostSpeedFrac = 0.1f;
+float lfVelScale      = 650.0f;
+float lfMinSpeedFrac  = 0.15f;

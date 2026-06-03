@@ -8,6 +8,8 @@
 static const uint8_t NUM_SENSORS            = 5;
 static const uint8_t SENSOR_CH[NUM_SENSORS] = {3, 2, 1, 0, 4};  // right → left (0 = hard right, 4000 = hard left)
 static const int     SETPOINT               = 2000;  // centre of 0–4000 range
+static const float   LF_DT                  = 0.020f; // 50 Hz tick — keeps derivative/integral on same scale
+static const float   LF_INTEGRAL_MAX_DEFAULT = 500.0f; // anti-windup fallback when Ki_ir == 0
 
 static const float KP = 0.5f;
 static const float KI = 0.0f;
@@ -110,12 +112,9 @@ void printIR()
     static unsigned long irTimer = 0;
     if (millis() - irTimer < 100) return;
     irTimer += 100;
-
-    int   position  = readLinePosition();
-    float pidOutput = (position == -1) ? 0.0f : computePID(position);
-
-    Serial.print("pos="); Serial.print(position);
-    Serial.print("  pid="); Serial.println(pidOutput, 2);
+    // Print the values actually used by lineFollowUpdate, not a separate PID
+    Serial.print("pos="); Serial.print(irPosition, 0);
+    Serial.print("  steering="); Serial.println(irSteering, 5);
 }
 
 void lineFollowUpdate()
@@ -132,7 +131,6 @@ void lineFollowUpdate()
     prevMode = lineFollowMode;
 
     if (!lineFollowMode) return;
-
     if (millis() - lfTimer < 20) return;
     lfTimer += 20;
 
@@ -140,19 +138,34 @@ void lineFollowUpdate()
     irPosition = (float)pos;
 
     if (pos == -1) {
+        // Line lost: freeze steering, creep at reduced speed, do NOT refresh
+        // timestamps so deadManCheck() cuts commands after 500ms sustained loss
         irSteering = 0.0f;
-    } else {
-        int proportional = pos - SETPOINT;  // SETPOINT shared with printIR
-        int derivative   = proportional - lfLastProp;
-        lfLastProp       = proportional;
-        lfIntegral      += proportional * 0.020f;
-        irSteering = proportional * Kp_ir
-                   + lfIntegral   * Ki_ir
-                   + derivative   * Kd_ir;
+        turnBias   = 0.0f;
+        velTarget  = lineFollowSpeed * lfLostSpeedFrac;
+        return;
     }
 
-    velTarget    = lineFollowSpeed;
-    turnBias     = constrain(-irSteering, -MAX_TURN_BIAS, MAX_TURN_BIAS);
-    lastEspNowMs = millis();
-    lastTurnCmdMs= millis();
+    int   proportional = pos - SETPOINT;
+    float derivative   = (float)(proportional - lfLastProp) / LF_DT;  // [counts/s]
+    lfLastProp = proportional;
+
+    lfIntegral += (float)proportional * LF_DT;  // [count·s]
+
+    // Anti-windup: clamp integral to what's physically reachable at MAX_TURN_BIAS
+    float lfIntMax = (Ki_ir > 1e-6f) ? (MAX_TURN_BIAS / Ki_ir) : LF_INTEGRAL_MAX_DEFAULT;
+    lfIntegral = constrain(lfIntegral, -lfIntMax, lfIntMax);
+
+    irSteering = (float)proportional * Kp_ir
+               + lfIntegral          * Ki_ir
+               + derivative          * Kd_ir;
+
+    // Reduce speed proportional to error so tight curves are tracked at lower speed
+    float speedFactor = constrain(1.0f - fabsf((float)proportional) / lfVelScale,
+                                  lfMinSpeedFrac, 1.0f);
+    velTarget = lineFollowSpeed * speedFactor;
+
+    turnBias      = constrain(-irSteering, -MAX_TURN_BIAS, MAX_TURN_BIAS);
+    lastEspNowMs  = millis();
+    lastTurnCmdMs = millis();
 }

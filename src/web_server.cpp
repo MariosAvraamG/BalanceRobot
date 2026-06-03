@@ -42,10 +42,13 @@ static void handleSet()
         step1.setAccelerationRad(motorAccel);
         step2.setAccelerationRad(motorAccel);
     }
-    if (server.hasArg("lfs"))  lineFollowSpeed = server.arg("lfs").toFloat();
+    if (server.hasArg("lfs"))   lineFollowSpeed = server.arg("lfs").toFloat();
     if (server.hasArg("kpir")) Kp_ir           = server.arg("kpir").toFloat();
     if (server.hasArg("kiir")) Ki_ir           = server.arg("kiir").toFloat();
     if (server.hasArg("kdir")) Kd_ir           = server.arg("kdir").toFloat();
+    if (server.hasArg("lflsf")) lfLostSpeedFrac = constrain(server.arg("lflsf").toFloat(), 0.0f, 1.0f);
+    if (server.hasArg("lfvs"))  lfVelScale      = constrain(server.arg("lfvs").toFloat(),  50.0f, 4000.0f);
+    if (server.hasArg("lfms"))  lfMinSpeedFrac  = constrain(server.arg("lfms").toFloat(),  0.0f, 1.0f);
     server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -114,7 +117,7 @@ static void handleStatus()
 {
     uint32_t upSec  = millis() / 1000;
     uint32_t calSec = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
-    char buf[1100];
+    char buf[1200];
     snprintf(buf, sizeof(buf),
         "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
         "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
@@ -123,6 +126,7 @@ static void handleStatus()
         "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
         "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
+        "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
         "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f}",
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
         Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
@@ -131,6 +135,7 @@ static void handleStatus()
         Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
         yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
+        lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,
         SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem);
     server.send(200, "application/json", buf);
 }

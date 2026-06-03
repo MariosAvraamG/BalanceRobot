@@ -7,20 +7,51 @@
 
 static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
 {
-    if (len < (int)sizeof(EspNowCmd)) return;
-    EspNowCmd cmd;
+    if (len < (int)sizeof(ControllerCmd)) return;
+    ControllerCmd cmd;
     memcpy(&cmd, data, sizeof(cmd));
+
     velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
     turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
     lastTurnCmdMs = millis();
     lastEspNowMs  = millis();
 
-    static unsigned long lastPrintMs = 0;
-    if (millis() - lastPrintMs >= 500) {
-        lastPrintMs = millis();
-        Serial.printf("[ESP-NOW] lin=%.2f  ang=%.2f  from %02X:%02X:%02X:%02X:%02X:%02X\n",
-                      cmd.linear_vel, cmd.angular_vel,
+    // Button stubs — assign behaviour here when ready
+    if (cmd.btn_red)   { /* reserved */ }
+    if (cmd.btn_blue)  { /* reserved */ }
+    if (cmd.btn_green) { /* reserved */ }
+
+    // Diagnostics: first-packet banner, per-packet data, and 2-second rate report
+    static bool          firstPacket = true;
+    static uint32_t      pktCount    = 0;
+    static uint32_t      rateCount   = 0;
+    static unsigned long rateTimer   = 0;
+    static unsigned long printTimer  = 0;
+
+    pktCount++;
+    rateCount++;
+
+    if (firstPacket) {
+        firstPacket = false;
+        Serial.printf("[ESP-NOW] First packet from %02X:%02X:%02X:%02X:%02X:%02X\n",
                       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+
+    // Print every packet — at ~50 Hz this is readable in the serial monitor
+    if (millis() - printTimer >= 100) {
+        printTimer = millis();
+        Serial.printf("[ESP-NOW] #%lu  lin=%+.2f  ang=%+.2f  r=%d b=%d g=%d\n",
+                      (unsigned long)pktCount,
+                      cmd.linear_vel, cmd.angular_vel,
+                      cmd.btn_red, cmd.btn_blue, cmd.btn_green);
+    }
+
+    // Packet-rate summary every 2 s
+    if (millis() - rateTimer >= 2000) {
+        Serial.printf("[ESP-NOW] rate=%.1f pkt/s  total=%lu\n",
+                      rateCount / 2.0f, (unsigned long)pktCount);
+        rateCount  = 0;
+        rateTimer  = millis();
     }
 }
 
