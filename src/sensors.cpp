@@ -11,14 +11,8 @@ static const int     SETPOINT               = 2000;  // centre of 0–4000 range
 static const float   LF_DT                  = 0.020f; // 50 Hz tick — keeps derivative/integral on same scale
 static const float   LF_INTEGRAL_MAX_DEFAULT = 500.0f; // anti-windup fallback when Ki_ir == 0
 
-static const float KP = 0.5f;
-static const float KI = 0.0f;
-static const float KD = 0.1f;
-
 static uint16_t calMin[NUM_SENSORS];
 static uint16_t calMax[NUM_SENSORS];
-static float    irIntegral       = 0.0f;
-static int      lastProportional = 0;
 
 static uint16_t readADC(uint8_t channel)
 {
@@ -61,7 +55,7 @@ static uint16_t readNormalized(uint8_t i)
     return 1000UL * (calMax[i] - raw) / range;
 }
 
-// Returns 0 (line far left) – 2000 (line far right), 1000 = centred.
+// Returns 0 (line far left) – 4000 (line far right), 2000 = centred.
 // Returns -1 when no line is detected.
 static int readLinePosition()
 {
@@ -77,16 +71,6 @@ static int readLinePosition()
     return (int)(weighted / total);
 }
 
-// Positive = line is to the right, negative = line is to the left
-static float computePID(int position)
-{
-    int proportional  = position - SETPOINT;
-    int derivative    = proportional - lastProportional;
-    irIntegral       += proportional;
-    lastProportional  = proportional;
-    return proportional * KP + irIntegral * KI + derivative * KD;
-}
-
 void sensorsBegin()
 {
     pinMode(ADC_CS_PIN, OUTPUT);
@@ -99,12 +83,6 @@ void sensorsCalibrateIR()
     Serial.println("IR calibrating — sweep sensors over line for 5 seconds...");
     calibrateIR();
     Serial.println("IR calibration done.");
-}
-
-void sensorsInit()
-{
-    sensorsBegin();
-    sensorsCalibrateIR();
 }
 
 void printIR()

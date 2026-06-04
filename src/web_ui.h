@@ -120,7 +120,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
       <div class="row"><label>Speed</label><input type="range" id="lfs" min="0" max="21.6" step="0.3" oninput="sendCms('lfs',this.value)"><span class="val" id="lfs_v">—</span></div>
       <div class="row"><label>Kp IR</label><input type="range" id="kpir" min="0" max="0.02" step="0.0001" oninput="send('kpir',this.value)"><span class="val" id="kpir_v">—</span></div>
       <div class="row"><label>Ki IR</label><input type="range" id="kiir" min="0" max="0.005" step="0.00005" oninput="send('kiir',this.value)"><span class="val" id="kiir_v">—</span></div>
-      <div class="row"><label>Kd IR</label><input type="range" id="kdir" min="0" max="0.0002" step="0.000002" oninput="send('kdir',this.value)"><span class="val" id="kdir_v">—</span></div>
+      <div class="row"><label>Kd IR</label><input type="range" id="kdir" min="0" max="0.02" step="0.0001" oninput="send('kdir',this.value)"><span class="val" id="kdir_v">—</span></div>
       <div class="row"><label>Lost spd</label><input type="range" id="lflsf" min="0" max="1" step="0.05" oninput="send('lflsf',this.value)"><span class="val" id="lflsf_v">—</span></div>
       <div class="row"><label>Spd scale</label><input type="range" id="lfvs" min="200" max="2000" step="50" oninput="send('lfvs',this.value)"><span class="val" id="lfvs_v">—</span></div>
       <div class="row"><label>Min spd</label><input type="range" id="lfms" min="0.1" max="1" step="0.05" oninput="send('lfms',this.value)"><span class="val" id="lfms_v">—</span></div>
