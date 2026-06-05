@@ -25,6 +25,7 @@ static void handleSet()
     if (server.hasArg("sp"))   BALANCE_ANGLE = server.arg("sp").toFloat();
     if (server.hasArg("kpv"))  Kp_vel        = server.arg("kpv").toFloat();
     if (server.hasArg("kvi"))  Ki_vel        = server.arg("kvi").toFloat();
+    if (server.hasArg("mvi"))  velIntMax     = server.arg("mvi").toFloat();
     if (server.hasArg("mts"))  MAX_TILT_SP   = server.arg("mts").toFloat();
     if (server.hasArg("vs"))   VEL_STEP      = server.arg("vs").toFloat();
     if (server.hasArg("mvt"))  MAX_VEL_TARGET= server.arg("mvt").toFloat();
@@ -123,7 +124,7 @@ static void handleStatus()
         "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
         "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
         "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
-        "\"kpv\":%.4f,\"kvi\":%.5f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
+        "\"kpv\":%.4f,\"kvi\":%.5f,\"mvi\":%.1f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
         "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
         "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
@@ -132,7 +133,7 @@ static void handleStatus()
         Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
         gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
         velEst, velTarget, tiltSP, velIntegral,
-        Kp_vel, Ki_vel, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
+        Kp_vel, Ki_vel, velIntMax, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
         yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
         lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,

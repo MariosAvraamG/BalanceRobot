@@ -94,8 +94,7 @@ void parseUart()
                     velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
                     turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
                     lastTurnCmdMs = millis();
-                    lastEspNowMs  = millis();
-                    lastUartMs    = millis();
+                    lastUartMs    = millis();  // UART has its own 2-second deadman (see deadManCheck)
                     uartLinear    = cmd.linear_vel;
                     uartAngular   = cmd.angular_vel;
                     uartState = HUNT_A;

@@ -81,8 +81,7 @@ void velLoopUpdate()
         float rawLean = Kp_vel * velErr + Ki_vel * velIntegral;
         if (fabsf(rawLean) < MAX_TILT_SP)
             velIntegral += velErr * dt_outer;
-        float maxVI = (Ki_vel > 1e-6f) ? MAX_TILT_SP / Ki_vel : 1000.0f;
-        velIntegral = constrain(velIntegral, -maxVI, maxVI);
+        velIntegral = constrain(velIntegral, -velIntMax, velIntMax);
         tiltSP = constrain(rawLean, -MAX_TILT_SP, MAX_TILT_SP);
     }
 }
@@ -95,6 +94,14 @@ void deadManCheck()
         velIntegral  = 0.0f;
         yawIntegral  = 0.0f;
         lastEspNowMs = 0;
+    }
+
+    if (lastUartMs && millis() - lastUartMs > 2000) {
+        velTarget   = 0.0f;
+        turnBias    = 0.0f;
+        velIntegral = 0.0f;
+        yawIntegral = 0.0f;
+        lastUartMs  = 0;
     }
 
     if (lastTurnCmdMs && turnBias != 0.0f && millis() - lastTurnCmdMs > 300) {

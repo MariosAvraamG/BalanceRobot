@@ -15,6 +15,7 @@ extern float MAX_TILT_SP;
 extern float EMA_ALPHA;
 extern float Kp_vel;
 extern float Ki_vel;
+extern float velIntMax;
 extern float VEL_STEP;
 extern float MAX_VEL_TARGET;
 extern float TURN_STEP;

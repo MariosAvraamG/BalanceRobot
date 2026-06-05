@@ -13,14 +13,15 @@ float MAX_TILT_SP    = 0.115f;
 float EMA_ALPHA      = 0.90f;
 float Kp_vel         = 0.007f;
 float Ki_vel         = 0.001f;
+float velIntMax      = 30.0f;
 float VEL_STEP       = 1.0f;
 float MAX_VEL_TARGET = 5.0f;
-float TURN_STEP      = 1.0f;
-float MAX_TURN_BIAS  = 7.0f;
+float TURN_STEP      = 0.1f;
+float MAX_TURN_BIAS  = 0.5f;
 
-float Kp_yaw        = 0.330f;
-float Ki_yaw        = 0.070f;
-float Kd_yaw        = 0.0230f;
+float Kp_yaw        = 2.5f;
+float Ki_yaw        = 0.07f;
+float Kd_yaw        = 0.0f;
 float YAW_EMA_ALPHA = 0.90f;
 
 float velTarget   = 0.0f;
@@ -63,9 +64,9 @@ float bat_trem   = 999.0f;
 
 bool  lineFollowMode  = false;
 float lineFollowSpeed = 1.0f;
-float Kp_ir           = 0.012f;
+float Kp_ir           = 0.018f;
 float Ki_ir           = 0.0003f;
-float Kd_ir           = 0.013f;
+float Kd_ir           = 0.025f;
 float irPosition      = -1.0f;
 float irSteering      = 0.0f;
 float lfLostSpeedFrac = 0.05f;

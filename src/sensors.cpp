@@ -97,15 +97,13 @@ void printIR()
 
 void lineFollowUpdate()
 {
-    static bool  prevMode   = false;
-    static float lfIntegral = 0.0f;
-    static int   lfLastProp = 0;
+    static bool  prevMode      = false;
+    static bool  prevLineValid = false;  // false → seed lfLastProp on next valid reading
+    static float lfIntegral    = 0.0f;
+    static int   lfLastProp    = 0;
     static unsigned long lfTimer = 0;
 
-    if (lineFollowMode && !prevMode) {
-        lfIntegral = 0.0f;
-        lfLastProp = 0;
-    }
+    bool modeJustEnabled = (lineFollowMode && !prevMode);
     prevMode = lineFollowMode;
 
     if (!lineFollowMode) return;
@@ -116,15 +114,25 @@ void lineFollowUpdate()
     irPosition = (float)pos;
 
     if (pos == -1) {
-        // Line lost: freeze steering, creep at reduced speed, do NOT refresh
-        // timestamps so deadManCheck() cuts commands after 500ms sustained loss
-        irSteering = 0.0f;
-        turnBias   = 0.0f;
-        velTarget  = lineFollowSpeed * lfLostSpeedFrac;
+        // Line lost: hold last steering direction so robot pivots toward where
+        // the line was last seen. Stop forward motion entirely.
+        // Timestamps not refreshed — deadManCheck() kills commands after 500ms.
+        turnBias      = constrain(-irSteering, -MAX_TURN_BIAS, MAX_TURN_BIAS);
+        velTarget     = 0.0f;
+        prevLineValid = false;
         return;
     }
 
-    int   proportional = pos - SETPOINT;
+    int proportional = pos - SETPOINT;
+
+    // On mode-enable or reacquisition after loss, seed lfLastProp from actual position
+    // so the first derivative sample is 0 instead of a spike from the initial offset.
+    if (!prevLineValid || modeJustEnabled) {
+        lfIntegral = 0.0f;
+        lfLastProp = proportional;
+    }
+    prevLineValid = true;
+
     float derivative   = (float)(proportional - lfLastProp) / LF_DT;  // [counts/s]
     lfLastProp = proportional;
 
