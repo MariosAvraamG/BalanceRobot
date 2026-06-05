@@ -22,7 +22,7 @@ public:
     //Update the stepper motor, performing a step and updating the speed as necessary. Call every interval μs
     void runStepper(){
         //Note: ESP32 doesn't support floating point calculations in an ISR, so this function only uses integer operations
-    
+
         //Increment speed calculation interval timer
         speedTimer += interval;
 
@@ -74,32 +74,32 @@ public:
     void setAcceleration(int newAccel){
         accel = newAccel;
     }
-    
+
     //Set target speed in rad/s. Do not call from ISR
     void setTargetSpeedRad(float speedRad){
         tSpeed = static_cast<int>(speedRad * SPEED_SCALE / STEP_ANGLE);
     }
-    
+
     // Set target speed in microsteps/(SPEED_SCALE * s)
     void setTargetSpeed(int speed){
         tSpeed = speed;
     }
-    
+
     // Get position in microsteps
     int getPosition() {
         return position;
     }
-    
+
     //Get position in rads. Do not call from ISR
     float getPositionRad() {
         return static_cast<float>(position) * STEP_ANGLE;
     }
-    
+
     //Get current speed in microsteps/(SPEED_SCALE * s)
     float getSpeed() {
         return speed;
     }
-    
+
     //Get current speed in rad/s. Do not call from ISR
     float getSpeedRad() {
         return static_cast<float>(speed) * STEP_ANGLE / SPEED_SCALE;
