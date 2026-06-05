@@ -11,7 +11,7 @@ html,body{height:100%;margin:0}
 body{font-family:monospace;padding:6px 10px;background:#111;color:#ddd;overflow:hidden}
 h2{color:#4af;margin:0 0 6px;font-size:15px}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;height:calc(100vh - 34px)}
-.col{display:flex;flex-direction:column;gap:6px}
+.col{display:flex;flex-direction:column;gap:6px;overflow-y:auto}
 .card{background:#1e1e1e;border-radius:6px;padding:6px 10px}
 .card b{color:#4af;font-size:11px;letter-spacing:.05em}
 .row{display:flex;align-items:center;margin:4px 0;gap:6px}
@@ -29,6 +29,8 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
 .cbtn{width:100%;margin-top:6px;padding:6px;background:#1a1a2e;border:1px solid #4af;border-radius:4px;color:#4af;font-family:monospace;font-size:11px;cursor:pointer}
 .cbtn:active{background:#4af;color:#111}
 .cbtn:disabled{opacity:.5;cursor:default}
+.bat-wrap{background:#333;border-radius:3px;height:8px;margin:4px 0 2px;overflow:hidden}
+.bat-bar{height:100%;width:0%;background:#4f4;border-radius:3px;transition:width .5s,background .5s}
 </style></head><body>
 <h2>BalanceBot Tuner</h2>
 <div class="grid">
@@ -56,6 +58,19 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
         <div><span class="k">IMU </span><span class="v" id="s_imu">—</span></div>
       </div>
     </div>
+    <div class="card">
+      <b>BATTERY</b>
+      <div class="bat-wrap"><div class="bat-bar" id="bat_bar"></div></div>
+      <div class="tele">
+        <div><span class="k">SoC    </span><span class="v" id="b_soc">—</span></div>
+        <div><span class="k">Voltage</span><span class="v" id="b_vbat">—</span></div>
+        <div><span class="k">I motor</span><span class="v" id="b_im">—</span></div>
+        <div><span class="k">I logic</span><span class="v" id="b_il">—</span></div>
+        <div><span class="k">Power  </span><span class="v" id="b_pw">—</span></div>
+        <div><span class="k">Energy </span><span class="v" id="b_en">—</span></div>
+        <div><span class="k">t rem  </span><span class="v" id="b_tr">—</span></div>
+      </div>
+    </div>
   </div>
   <div class="col">
     <div class="card"><b>PID GAINS</b>
@@ -75,6 +90,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
     <div class="card"><b>DRIVE</b>
       <div class="row"><label>Kp vel</label><input type="range" id="kpv" min="0" max="0.05" step="0.001" oninput="send('kpv',this.value)"><span class="val" id="kpv_v">—</span></div>
       <div class="row"><label>Ki vel</label><input type="range" id="kvi" min="0" max="0.01" step="0.0001" oninput="send('kvi',this.value)"><span class="val" id="kvi_v">—</span></div>
+      <div class="row"><label>Max vInt</label><input type="range" id="mvi" min="0" max="2000" step="10" oninput="send('mvi',this.value)"><span class="val" id="mvi_v">—</span></div>
       <div class="row"><label>Max tiltSP</label><input type="range" id="mts" min="0.005" max="0.3" step="0.005" oninput="send('mts',this.value)"><span class="val" id="mts_v">—</span></div>
       <div class="row"><label>Vel step</label><input type="range" id="vs" min="0.1" max="5" step="0.1" oninput="send('vs',this.value)"><span class="val" id="vs_v">—</span></div>
       <div class="row"><label>Max vel</label><input type="range" id="mvt" min="3" max="45" step="0.5" oninput="sendCms('mvt',this.value)"><span class="val" id="mvt_v">—</span></div>
@@ -101,17 +117,42 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
         <button class="dbtn" onpointerdown="startDiag('sd')" onpointerup="stopDiag()" onpointerleave="stopDiag()">&#8600;</button>
       </div>
     </div>
+    <div class="card"><b>LINE FOLLOW</b>
+      <div class="row"><label>Speed</label><input type="range" id="lfs" min="0" max="21.6" step="0.3" oninput="sendCms('lfs',this.value)"><span class="val" id="lfs_v">—</span></div>
+      <div class="row"><label>Kp IR</label><input type="range" id="kpir" min="0" max="0.02" step="0.0001" oninput="send('kpir',this.value)"><span class="val" id="kpir_v">—</span></div>
+      <div class="row"><label>Ki IR</label><input type="range" id="kiir" min="0" max="0.005" step="0.00005" oninput="send('kiir',this.value)"><span class="val" id="kiir_v">—</span></div>
+      <div class="row"><label>Kd IR</label><input type="range" id="kdir" min="0" max="0.05" step="0.0005" oninput="send('kdir',this.value)"><span class="val" id="kdir_v">—</span></div>
+      <div class="row"><label>Lost spd</label><input type="range" id="lflsf" min="0" max="1" step="0.05" oninput="send('lflsf',this.value)"><span class="val" id="lflsf_v">—</span></div>
+      <div class="row"><label>Spd scale</label><input type="range" id="lfvs" min="200" max="2000" step="50" oninput="send('lfvs',this.value)"><span class="val" id="lfvs_v">—</span></div>
+      <div class="row"><label>Min spd</label><input type="range" id="lfms" min="0.1" max="1" step="0.05" oninput="send('lfms',this.value)"><span class="val" id="lfms_v">—</span></div>
+      <div class="tele" style="margin:4px 0">
+        <div><span class="k">IR pos  </span><span class="v" id="t_ip">—</span></div>
+        <div><span class="k">IR corr </span><span class="v" id="t_ic">—</span></div>
+      </div>
+      <button class="cbtn" id="ir_cal_btn" onclick="doCalibrateIR()">Calibrate IR Sensors</button>
+      <button class="cbtn" id="lf_btn" onclick="toggleLF()">Enable Line Follow</button>
+    </div>
   </div>
 </div>
 <script>
 function send(p,v){
-  var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+  var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:p==='lfvs'?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
 function sendCms(p,v){
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(1)+' cm/s';
   fetch('/set?'+p+'='+(parseFloat(v)/3));
+}
+function toggleLF(){
+  var en=document.getElementById('lf_btn').dataset.on!=='1';
+  fetch('/linefollow?en='+(en?1:0)).then(function(r){return r.json();}).then(function(d){setLFBtn(d.lf);});
+}
+function setLFBtn(on){
+  var b=document.getElementById('lf_btn');
+  b.dataset.on=on?'1':'0';
+  if(on){b.textContent='Disable Line Follow';b.style.color='#f55';b.style.borderColor='#f55';}
+  else{b.textContent='Enable Line Follow';b.style.color='#4af';b.style.borderColor='#4af';}
 }
 var inited=false;
 function poll(){
@@ -128,17 +169,31 @@ function poll(){
     document.getElementById('t_yr').textContent=(d.yaw_rate||0).toFixed(4)+' r/s';
     document.getElementById('t_yc').textContent=(d.yawCorr||0).toFixed(4)+' r/s';
     document.getElementById('t_yt').textContent=(d.turnBias||0).toFixed(3)+' r/s';
+    document.getElementById('t_ip').textContent=(d.irPos>=0)?d.irPos.toFixed(0):'none';
+    document.getElementById('t_ic').textContent=(d.irCorr||0).toFixed(4);
+    setLFBtn(d.lf||false);
+    var soc=d.soc!=null?d.soc:0;
+    document.getElementById('b_soc').textContent=soc.toFixed(1)+'%';
+    document.getElementById('b_vbat').textContent=(d.vbat||0).toFixed(2)+' V';
+    document.getElementById('b_im').textContent=(d.imotor||0).toFixed(3)+' A';
+    document.getElementById('b_il').textContent=(d.ilogic||0).toFixed(3)+' A';
+    document.getElementById('b_pw').textContent=(d.power||0).toFixed(2)+' W';
+    document.getElementById('b_en').textContent=(d.energy||0).toFixed(2)+' Wh';
+    document.getElementById('b_tr').textContent=d.trem>=999?'—':(d.trem||0).toFixed(0)+' min';
+    var bar=document.getElementById('bat_bar');
+    bar.style.width=Math.min(soc,100)+'%';
+    bar.style.background=soc>50?'#4f4':soc>20?'#fa4':'#f44';
     var imuEl=document.getElementById('s_imu');
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea'].forEach(function(p){
-        document.getElementById(p).value=d[p];
-        var dp=(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy')?4:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
-        document.getElementById(p+'_v').textContent=parseFloat(d[p]).toFixed(dp);
+      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea','kpir','kiir','kdir','lflsf','lfvs','lfms'].forEach(function(p){
+        document.getElementById(p).value=d[p]||0;
+        var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:p==='lfvs'?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+        document.getElementById(p+'_v').textContent=parseFloat(d[p]||0).toFixed(dp);
       });
-      ['mw','mvt'].forEach(function(p){
-        var cms=d[p]*3;
+      ['mw','mvt','lfs'].forEach(function(p){
+        var cms=(d[p]||0)*3;
         document.getElementById(p).value=cms;
         document.getElementById(p+'_v').textContent=cms.toFixed(1)+' cm/s';
       });
@@ -176,6 +231,15 @@ function doCalibrate(){
     b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
   }).catch(function(){
     b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
+  });
+}
+function doCalibrateIR(){
+  var b=document.getElementById('ir_cal_btn');
+  b.textContent='Calibrating IR… (5s)';b.disabled=true;
+  fetch('/calibrateIR').then(function(){
+    b.textContent='Calibrate IR Sensors';b.disabled=false;
+  }).catch(function(){
+    b.textContent='Calibrate IR Sensors';b.disabled=false;
   });
 }
 setInterval(poll,500);poll();
