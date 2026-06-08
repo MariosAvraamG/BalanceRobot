@@ -8,23 +8,29 @@
 static const float VB_RATIO    = 10000.0f / (47000.0f + 10000.0f); // 47k/10k divider
 static const float SCALE_MOTOR = 20.0f  * 0.1f;   // INA180A1: gain=20, shunt=0.1 Ω
 static const float SCALE_LOGIC = 100.0f * 0.01f;  // INA180A3: gain=100, shunt=0.01 Ω
-static const float C_NOM_AH    = 1.6f;  // effective capacity at robot discharge rate (~80% of 2.0Ah nameplate)
+// SET THIS to Qused_Ah from the [BAT] CRITICAL serial line after a full discharge run.
+// Current value is estimated: 2.0Ah nameplate × ~80% derating at ~2A avg / 45 min runtime.
+static const float C_NOM_AH    = 1.6f;
 
 // ── Battery thresholds ────────────────────────────────────────────
-static const float V_FLOOR_RESEED   = 11.5f;  // below this, don't re-seed (pack is genuinely low)
+static const float V_FLOOR_RESEED   = 13.1f;  // below this, don't re-seed (pack is genuinely low)
 static const float RESEED_MAX_QUSED = 0.05f;  // if >50 mAh counted this session, depletion is real
 static const float MIN_I_LOAD       = 0.15f;  // below this, voltage is near OCV — freeze bat_vbat
 static const float MIN_I_TREM       = 0.20f;  // below this, t_rem is meaningless
-static const float V_CRITICAL       = 10.5f;  // graceful-shutdown threshold
+static const float V_CRITICAL       = 12.3f;  // graceful-shutdown threshold
 
-// ── NiMH OCV → SoC lookup ────────────────────────────────────────
+// ── NiMH OCV → SoC lookup ────────────────────────────────────────────────
+// Empirical per-cell OCV data scaled to 11 cells (11 × 1.455V = 16.0V full,
+// 11 × 1.045V = 11.5V empty — matches observed pack endpoints exactly).
+// Shape: sharp surface-charge drop 100→96%, very flat plateau 80→20%,
+// gradual then steep tail 20→0%.
 static const int N_TAB = 26;
 static const float V_TAB[N_TAB] = {
-    14.880f, 14.340f, 13.800f, 13.500f, 13.200f, 13.104f,
-    13.020f, 12.960f, 12.900f, 12.840f, 12.780f, 12.744f,
-    12.720f, 12.684f, 12.660f, 12.660f, 12.660f, 12.504f,
-    12.360f, 12.180f, 12.000f, 11.640f, 11.280f, 10.860f,
-    10.440f,  9.600f
+    16.000f, 14.772f, 14.299f, 14.146f, 14.070f, 14.025f,
+    13.989f, 13.962f, 13.935f, 13.908f, 13.881f, 13.863f,
+    13.845f, 13.827f, 13.800f, 13.773f, 13.746f, 13.705f,
+    13.665f, 13.602f, 13.530f, 13.431f, 13.305f, 13.107f,
+    12.639f, 11.500f
 };
 static const float SOC_TAB[N_TAB] = {
     100.0f, 96.0f, 92.0f, 88.0f, 84.0f, 80.0f,
@@ -36,7 +42,7 @@ static const float SOC_TAB[N_TAB] = {
 
 static float Qused_Ah = 0.0f;
 static float I_prev   = 0.0f;
-static float I_ema    = 0.0f;  // slow EMA for t_rem (α=0.02 → ~50 s window at 1 Hz)
+static float I_ema    = 0.0f;  // slow EMA for t_rem (α=0.004 at 5 Hz → ~50 s window)
 
 // Average 16 samples to reduce ESP32 internal-ADC noise
 static float readVolts(int pin)
@@ -83,16 +89,17 @@ void powerUpdate()
     static unsigned long updateTimer = 0;
     static unsigned long printTimer  = 0;
 
-    if (millis() - updateTimer < 1000UL) return;
-    updateTimer += 1000UL;
+    // 5 Hz update — better captures stepper current spikes between samples
+    if (millis() - updateTimer < 200UL) return;
+    updateTimer += 200UL;
 
     float Vpack   = readVolts(BAT_PIN_VBAT)   / VB_RATIO;
     float Imotor  = max(0.0f, readVolts(BAT_PIN_IMOTOR) / SCALE_MOTOR);
     float Ilogic  = max(0.0f, readVolts(BAT_PIN_ILOGIC) / SCALE_LOGIC);
     float I_total = Imotor + Ilogic;
 
-    // Coulomb counter at 1-second resolution (trapezoidal)
-    const float dt_h = 1.0f / 3600.0f;
+    // Trapezoidal Coulomb counter at 200 ms resolution
+    const float dt_h = 200.0f / 3600000.0f;  // 200 ms expressed in hours
     Qused_Ah += 0.5f * (I_prev + I_total) * dt_h;
     I_prev    = I_total;
 
@@ -128,10 +135,9 @@ void powerUpdate()
     float P_watts     = bat_vbat * I_total;
     float E_remain_Wh = (SoC / 100.0f) * C_NOM_AH * bat_vbat;
 
-    // Slow EMA on current — smooths t_rem over ~50 s so momentary load changes
-    // don't cause wild swings; I_ema persists across idle periods
+    // Slow EMA on current — α=0.004 at 5 Hz gives same ~50 s window as α=0.02 at 1 Hz
     if (I_ema < 1e-6f) I_ema = I_total;
-    else               I_ema += 0.02f * (I_total - I_ema);
+    else               I_ema += 0.004f * (I_total - I_ema);
 
     // t_rem: use EMA current so estimate reflects recent average draw;
     // show -- when never under real load; cap at 5 min in warning zone

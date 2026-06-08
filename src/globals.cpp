@@ -64,11 +64,11 @@ float bat_trem   = 999.0f;
 
 bool  lineFollowMode  = false;
 float lineFollowSpeed = 1.0f;
-float Kp_ir           = 0.018f;
+float Kp_ir           = 0.015f;
 float Ki_ir           = 0.0003f;
 float Kd_ir           = 0.025f;
 float irPosition      = -1.0f;
 float irSteering      = 0.0f;
 float lfLostSpeedFrac = 0.05f;
-float lfVelScale      = 1000.0f;
+float lfVelScale      = 750.0f;
 float lfMinSpeedFrac  = 0.10f;
