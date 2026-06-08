@@ -5,21 +5,45 @@
 #include "config.h"
 #include "motors.h"
 
+static bool espNowPrimary = true;  // true = ESP-NOW drives robot; false = UART drives robot
+
 static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
 {
     if (len < (int)sizeof(ControllerCmd)) return;
     ControllerCmd cmd;
     memcpy(&cmd, data, sizeof(cmd));
 
-    velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
-    turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
-    lastTurnCmdMs = millis();
-    lastEspNowMs  = millis();
+    if (espNowPrimary && !lineFollowMode) {
+        velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
+        turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
+        lastTurnCmdMs = millis();
+        lastEspNowMs  = millis();
+    }
 
-    // Button stubs — assign behaviour here when ready
-    if (cmd.btn_red)   { /* reserved */ }
-    if (cmd.btn_blue)  { /* reserved */ }
-    if (cmd.btn_green) { /* reserved */ }
+    if (cmd.btn_red) {
+        velTarget   = 0.0f;
+        tiltSP      = 0.0f;
+        integral    = 0.0f;
+        velIntegral = 0.0f;
+        turnBias    = 0.0f;
+        yawIntegral = 0.0f;
+    }
+    if (cmd.btn_blue) {
+        espNowPrimary = !espNowPrimary;
+        velTarget     = 0.0f;
+        turnBias      = 0.0f;
+        velIntegral   = 0.0f;
+        yawIntegral   = 0.0f;
+        Serial.printf("[CTRL] Source -> %s\n", espNowPrimary ? "ESP-NOW" : "UART");
+    }
+    if (cmd.btn_green) {
+        lineFollowMode = !lineFollowMode;
+        velTarget      = 0.0f;
+        turnBias       = 0.0f;
+        velIntegral    = 0.0f;
+        yawIntegral    = 0.0f;
+        Serial.printf("[CTRL] IR mode -> %s\n", lineFollowMode ? "ON" : "OFF");
+    }
 
     // Diagnostics: first-packet banner, per-packet data, and 2-second rate report
     static bool          firstPacket = true;
@@ -91,12 +115,14 @@ void parseUart()
                 if (uartIdx == sizeof(EspNowCmd)) {
                     EspNowCmd cmd;
                     memcpy(&cmd, uartBuf, sizeof(cmd));
-                    velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
-                    turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
-                    lastTurnCmdMs = millis();
-                    lastUartMs    = millis();  // UART has its own 2-second deadman (see deadManCheck)
-                    uartLinear    = cmd.linear_vel;
-                    uartAngular   = cmd.angular_vel;
+                    uartLinear  = cmd.linear_vel;   // always update for diagnostics
+                    uartAngular = cmd.angular_vel;
+                    if (!espNowPrimary && !lineFollowMode) {
+                        velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
+                        turnBias      = constrain(cmd.angular_vel, -MAX_TURN_BIAS,  MAX_TURN_BIAS);
+                        lastTurnCmdMs = millis();
+                        lastUartMs    = millis();
+                    }
                     uartState = HUNT_A;
                 }
                 break;
