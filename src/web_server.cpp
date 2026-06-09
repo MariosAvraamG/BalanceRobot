@@ -128,7 +128,7 @@ static void handleStatus()
         "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
         "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
-        "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f}",
+        "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f,\"qused\":%.3f}",
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
         Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
         gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
@@ -137,13 +137,13 @@ static void handleStatus()
         yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
         lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,
-        SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem);
+        SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem, bat_qused);
     server.send(200, "application/json", buf);
 }
 
 void webServerInit()
 {
-    WiFi.softAP("BalanceBot2", "balance123");
+    WiFi.softAP("BalanceBot2", "balance123", WIFI_CHANNEL);
     esp_wifi_set_ps(WIFI_PS_NONE);
     Serial.printf("Web tuner: connect to WiFi 'BalanceBot2' then open http://%s\n",
                   WiFi.softAPIP().toString().c_str());
