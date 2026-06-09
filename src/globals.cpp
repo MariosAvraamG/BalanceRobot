@@ -61,9 +61,10 @@ float bat_ilogic = 0.0f;
 float bat_power  = 0.0f;
 float bat_energy = 0.0f;
 float bat_trem   = 999.0f;
+float bat_qused  = 0.0f;
 
 bool  lineFollowMode  = false;
-float lineFollowSpeed = 1.0f;
+float lineFollowSpeed = 1.6f;
 float Kp_ir           = 0.015f;
 float Ki_ir           = 0.0003f;
 float Kd_ir           = 0.025f;

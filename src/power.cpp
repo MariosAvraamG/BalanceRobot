@@ -154,6 +154,7 @@ void powerUpdate()
     bat_power  = P_watts;
     bat_energy = E_remain_Wh;
     bat_trem   = t_remain_min;
+    bat_qused  = Qused_Ah;
 
     if (millis() - printTimer < 5000UL) return;
     printTimer += 5000UL;

@@ -30,6 +30,13 @@ const int BAT_PIN_IMOTOR = 35;
 const int BAT_PIN_ILOGIC = 34;
 const int BATTERY_INTERVAL_MS = 5000;
 
+// ── WiFi / ESP-NOW ────────────────────────────────────────────────
+const int WIFI_CHANNEL = 1;  // SoftAP channel — controller must match this
+
+// ── WS2812B LED strip ─────────────────────────────────────────────
+const int WS2812B_PIN = 17;
+const int WS2812B_NUM = 7;   // change to match actual LED count
+
 // ── Fixed control limits ──────────────────────────────────────────
 const float MAX_INTEGRAL = 0.1f;
 const float FALL_ANGLE   = 0.4f;

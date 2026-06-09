@@ -69,6 +69,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
         <div><span class="k">Power  </span><span class="v" id="b_pw">—</span></div>
         <div><span class="k">Energy </span><span class="v" id="b_en">—</span></div>
         <div><span class="k">t rem  </span><span class="v" id="b_tr">—</span></div>
+        <div><span class="k">Q used </span><span class="v" id="b_qu">—</span></div>
       </div>
     </div>
   </div>
@@ -180,6 +181,7 @@ function poll(){
     document.getElementById('b_pw').textContent=(d.power||0).toFixed(2)+' W';
     document.getElementById('b_en').textContent=(d.energy||0).toFixed(2)+' Wh';
     document.getElementById('b_tr').textContent=d.trem>=999?'—':(d.trem||0).toFixed(0)+' min';
+    document.getElementById('b_qu').textContent=(d.qused||0).toFixed(3)+' Ah';
     var bar=document.getElementById('bat_bar');
     bar.style.width=Math.min(soc,100)+'%';
     bar.style.background=soc>50?'#4f4':soc>20?'#fa4':'#f44';

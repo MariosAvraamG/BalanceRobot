@@ -2,8 +2,11 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_NeoPixel.h>
 #include "config.h"
 #include "globals.h"
+
+static Adafruit_NeoPixel strip(WS2812B_NUM, WS2812B_PIN, NEO_GRB + NEO_KHZ800);
 
 static Adafruit_SSD1306 oled(128, 64, &Wire1, -1);
 static bool oledOk = false;
@@ -49,6 +52,18 @@ static void drawDisplay()
                            SSD1306_WHITE);
 
     oled.display();
+}
+
+void ledInit()
+{
+    strip.begin();
+    strip.setBrightness(40);  // ~16% — safe current draw, visible indoors
+    int mid = WS2812B_NUM / 2;
+    for (int i = 0; i < WS2812B_NUM; i++) {
+        if (i == mid) strip.setPixelColor(i, strip.Color(255, 0, 0));  // middle: red
+        else          strip.setPixelColor(i, strip.Color(0, 0, 255));  // peripheral: blue
+    }
+    strip.show();
 }
 
 void displayInit()

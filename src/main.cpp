@@ -21,6 +21,7 @@ void setup()
     sensorsBegin();    // SPI ADC hardware init (IR calibration done via web UI)
     powerInit();       // ADC pins, OCV seed — motors at rest so voltage is reliable
     displayInit();     // Wire1 on GPIO 25/32, spawns render task on core 0
+    ledInit();         // WS2812B on GPIO 1: middle=red, peripherals=blue
 
     Serial.println("Calibrating — hold robot upright and still for 1 second...");
     calibrate();
@@ -53,6 +54,7 @@ void loop()
     velLoopUpdate();
     deadManCheck();
     powerUpdate();
+    commsSendStatus();
     printDiagnostics();
     printIR();
 }
