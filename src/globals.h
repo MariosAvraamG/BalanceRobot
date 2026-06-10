@@ -70,6 +70,7 @@ extern float bat_qused;
 
 // ── Line follow ───────────────────────────────────────────────────
 extern bool  lineFollowMode;
+extern bool  espNowPrimary;
 extern float lineFollowSpeed;
 extern float Kp_ir;
 extern float Ki_ir;

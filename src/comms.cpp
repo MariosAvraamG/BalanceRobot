@@ -5,7 +5,7 @@
 #include "config.h"
 #include "motors.h"
 
-static bool    espNowPrimary    = true;
+// espNowPrimary defined in globals.cpp — accessible everywhere
 static bool    peerRegistered   = false;
 static uint8_t controllerMac[6] = {0};
 
@@ -22,6 +22,7 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
         memcpy(peer.peer_addr, controllerMac, 6);
         peer.channel = 1;
         peer.encrypt = false;
+        peer.ifidx = WIFI_IF_AP;
         esp_now_add_peer(&peer);
         peerRegistered = true;
     }
