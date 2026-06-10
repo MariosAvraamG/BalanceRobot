@@ -66,9 +66,11 @@ extern float bat_ilogic;
 extern float bat_power;
 extern float bat_energy;
 extern float bat_trem;
+extern float bat_qused;
 
 // ── Line follow ───────────────────────────────────────────────────
 extern bool  lineFollowMode;
+extern bool  espNowPrimary;
 extern float lineFollowSpeed;
 extern float Kp_ir;
 extern float Ki_ir;

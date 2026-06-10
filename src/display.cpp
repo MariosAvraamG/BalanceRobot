@@ -2,8 +2,11 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Adafruit_NeoPixel.h>
 #include "config.h"
 #include "globals.h"
+
+static Adafruit_NeoPixel strip(WS2812B_NUM, WS2812B_PIN, NEO_GRB + NEO_KHZ800);
 
 static Adafruit_SSD1306 oled(128, 64, &Wire1, -1);
 static bool oledOk = false;
@@ -49,6 +52,43 @@ static void drawDisplay()
                            SSD1306_WHITE);
 
     oled.display();
+}
+
+void ledInit()
+{
+    strip.begin();
+    strip.setBrightness(5);
+    int moduleSize = WS2812B_NUM / 2;  // LEDs per module
+    for (int i = 0; i < WS2812B_NUM; i++) {
+        bool isLast = ((i + 1) % moduleSize == 1);
+        strip.setPixelColor(i, isLast ? strip.Color(255, 255, 255)   // last of each module: red
+                                      : strip.Color(255, 255, 255)); // rest: blue
+    }
+    strip.show();
+}
+
+void ledUpdate()
+{
+    static int lastMode = -1;
+
+    int mode;
+    if      (lineFollowMode)  mode = 2;   // green
+    else if (!espNowPrimary)  mode = 1;   // blue
+    else                      mode = 0;   // white
+
+    if (mode == lastMode) return;         // no change — skip redundant show()
+    lastMode = mode;
+
+    uint32_t colour;
+    switch (mode) {
+        case 2:  colour = strip.Color(  0, 255,   0); break;  // line follow: green
+        case 1:  colour = strip.Color(  0,   0, 255); break;  // UART:        blue
+        default: colour = strip.Color(255, 0, 0); break;  // ESP-NOW:     white
+    }
+
+    for (int i = 0; i < WS2812B_NUM; i++)
+        strip.setPixelColor(i, (i == 0 || i == 7) ? strip.Color(255, 255, 255) : colour);
+    strip.show();
 }
 
 void displayInit()

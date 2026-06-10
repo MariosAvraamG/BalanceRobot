@@ -5,13 +5,27 @@
 #include "config.h"
 #include "motors.h"
 
-static bool espNowPrimary = true;  // true = ESP-NOW drives robot; false = UART drives robot
+// espNowPrimary defined in globals.cpp — accessible everywhere
+static bool    peerRegistered   = false;
+static uint8_t controllerMac[6] = {0};
 
 static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
 {
     if (len < (int)sizeof(ControllerCmd)) return;
     ControllerCmd cmd;
     memcpy(&cmd, data, sizeof(cmd));
+
+    // Register sender as a peer on first contact so we can send status back
+    if (!peerRegistered) {
+        memcpy(controllerMac, mac, 6);
+        esp_now_peer_info_t peer = {};
+        memcpy(peer.peer_addr, controllerMac, 6);
+        peer.channel = 1;
+        peer.encrypt = false;
+        peer.ifidx = WIFI_IF_AP;
+        esp_now_add_peer(&peer);
+        peerRegistered = true;
+    }
 
     if (espNowPrimary && !lineFollowMode) {
         velTarget     = constrain(cmd.linear_vel,  -MAX_VEL_TARGET, MAX_VEL_TARGET);
@@ -34,6 +48,10 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
         turnBias      = 0.0f;
         velIntegral   = 0.0f;
         yawIntegral   = 0.0f;
+        // Disarm the deadman of the source we just left so it cannot fire
+        // while the new source is in control.
+        if (espNowPrimary) lastUartMs   = 0;
+        else               lastEspNowMs = 0;
         Serial.printf("[CTRL] Source -> %s\n", espNowPrimary ? "ESP-NOW" : "UART");
     }
     if (cmd.btn_green) {
@@ -128,6 +146,31 @@ void parseUart()
                 break;
         }
     }
+}
+
+// mode values: 0 = MANUAL, 1 = CV, 2 = LINE_FOLLOW
+void commsSendStatus()
+{
+    static unsigned long timer = 0;
+    if (!peerRegistered)            return;
+    if (millis() - timer < 1000UL)  return;
+    timer = millis();
+
+    RobotStatus msg;
+    if      (lineFollowMode)  msg.mode = 2;
+    else if (!espNowPrimary)  msg.mode = 1;
+    else                      msg.mode = 0;
+    msg.soc     = SoC;
+    msg.linear  = velTarget;
+    msg.angular = turnBias;
+
+    esp_now_send(controllerMac, (const uint8_t*)&msg, sizeof(msg));
+
+    static const char* MODE_STR[] = { "MANUAL", "CV", "LINE_FOLLOW" };
+    Serial.printf("[STATUS->CTRL] %02X:%02X:%02X:%02X:%02X:%02X  mode=%s  soc=%.1f%%  lin=%+.2f  ang=%+.2f\n",
+                  controllerMac[0], controllerMac[1], controllerMac[2],
+                  controllerMac[3], controllerMac[4], controllerMac[5],
+                  MODE_STR[msg.mode], msg.soc, msg.linear, msg.angular);
 }
 
 void parseSerial()
