@@ -57,12 +57,37 @@ static void drawDisplay()
 void ledInit()
 {
     strip.begin();
-    strip.setBrightness(40);  // ~16% — safe current draw, visible indoors
-    int mid = WS2812B_NUM / 2;
+    strip.setBrightness(5);
+    int moduleSize = WS2812B_NUM / 2;  // LEDs per module
     for (int i = 0; i < WS2812B_NUM; i++) {
-        if (i == mid) strip.setPixelColor(i, strip.Color(255, 0, 0));  // middle: red
-        else          strip.setPixelColor(i, strip.Color(0, 0, 255));  // peripheral: blue
+        bool isLast = ((i + 1) % moduleSize == 1);
+        strip.setPixelColor(i, isLast ? strip.Color(255, 255, 255)   // last of each module: red
+                                      : strip.Color(255, 255, 255)); // rest: blue
     }
+    strip.show();
+}
+
+void ledUpdate()
+{
+    static int lastMode = -1;
+
+    int mode;
+    if      (lineFollowMode)  mode = 2;   // green
+    else if (!espNowPrimary)  mode = 1;   // blue
+    else                      mode = 0;   // white
+
+    if (mode == lastMode) return;         // no change — skip redundant show()
+    lastMode = mode;
+
+    uint32_t colour;
+    switch (mode) {
+        case 2:  colour = strip.Color(  0, 255,   0); break;  // line follow: green
+        case 1:  colour = strip.Color(  0,   0, 255); break;  // UART:        blue
+        default: colour = strip.Color(255, 0, 0); break;  // ESP-NOW:     white
+    }
+
+    for (int i = 0; i < WS2812B_NUM; i++)
+        strip.setPixelColor(i, (i == 0 || i == 7) ? strip.Color(255, 255, 255) : colour);
     strip.show();
 }
 

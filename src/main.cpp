@@ -55,6 +55,7 @@ void loop()
     deadManCheck();
     powerUpdate();
     commsSendStatus();
+    ledUpdate();
     printDiagnostics();
     printIR();
 }

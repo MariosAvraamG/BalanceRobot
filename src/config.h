@@ -35,7 +35,7 @@ const int WIFI_CHANNEL = 1;  // SoftAP channel — controller must match this
 
 // ── WS2812B LED strip ─────────────────────────────────────────────
 const int WS2812B_PIN = 17;
-const int WS2812B_NUM = 7;   // change to match actual LED count
+const int WS2812B_NUM = 14;   // change to match actual LED count
 
 // ── Fixed control limits ──────────────────────────────────────────
 const float MAX_INTEGRAL = 0.1f;
