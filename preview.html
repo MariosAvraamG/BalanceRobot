@@ -106,7 +106,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
     <div class="cam-card">
       <span class="lbl">CAMERA FEED</span>
       <div class="cam-wrap">
-        <img id="cam_img" src="/stream" alt=""
+        <img id="cam_img" src="http://192.168.1.50:8000" alt=""
              onload="document.getElementById('no_cam').style.display='none'"
              onerror="camError()">
         <div class="no-cam" id="no_cam">
@@ -358,7 +358,7 @@ function camError(){
   img.style.display='none';
   document.getElementById('no_cam').style.display='flex';
   clearTimeout(camRetryTimer);
-  camRetryTimer=setTimeout(function(){img.style.display='block';img.src='/stream?t='+Date.now();},4000);
+  camRetryTimer=setTimeout(function(){img.style.display='block';img.src='http://192.168.1.50:8000?t='+Date.now();},4000);
 }
 
 /* ── Parameter send helpers ── */
