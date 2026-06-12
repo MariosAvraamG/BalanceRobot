@@ -110,7 +110,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
     <div class="cam-card">
       <span class="lbl">CAMERA FEED</span>
       <div class="cam-wrap">
-        <img id="cam_img" src="/stream" alt=""
+        <img id="cam_img" src="http://192.168.1.66/stream" alt=""
              onload="document.getElementById('no_cam').style.display='none'"
              onerror="camError()">
         <div class="no-cam" id="no_cam">
@@ -324,6 +324,9 @@ function switchTab(id){
   if(id==='srv'&&!srvInited){srvInited=true;SRV.init();}
 }
 
+var ESP_URL='http://192.168.1.66';
+var SRV_URL='http://192.168.1.172:5001';
+
 /* ── Camera ── */
 var camRetryTimer=null;
 function camError(){
@@ -334,7 +337,7 @@ function camError(){
   clearTimeout(camRetryTimer);
   camRetryTimer=setTimeout(function(){
     img.style.display='block';
-    img.src='/stream?t='+Date.now();
+    img.src=ESP_URL+'/stream?t='+Date.now();
   },4000);
 }
 
@@ -342,17 +345,17 @@ function camError(){
 function send(p,v){
   var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:p==='lfvs'?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
-  fetch('/set?'+p+'='+v);
+  fetch(ESP_URL+'/set?'+p+'='+v);
 }
 function sendCms(p,v){
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(1)+' cm/s';
-  fetch('/set?'+p+'='+(parseFloat(v)/3));
+  fetch(ESP_URL+'/set?'+p+'='+(parseFloat(v)/3));
 }
 
 /* ── Line follow toggle ── */
 function toggleLF(){
   var en=document.getElementById('lf_btn').dataset.on!=='1';
-  fetch('/linefollow?en='+(en?1:0)).then(function(r){return r.json();}).then(function(d){setLFBtn(d.lf);});
+  fetch(ESP_URL+'/linefollow?en='+(en?1:0)).then(function(r){return r.json();}).then(function(d){setLFBtn(d.lf);});
 }
 function setLFBtn(on){
   var b=document.getElementById('lf_btn');
@@ -376,7 +379,7 @@ function resolveMode(d){
 /* ── Poll ── */
 var inited=false;
 function poll(){
-  fetch('/status').then(function(r){return r.json();}).then(function(d){
+  fetch(ESP_URL+'/status').then(function(r){return r.json();}).then(function(d){
 
     /* ── Calibration tab telemetry ── */
     document.getElementById('t_th').textContent=d.theta.toFixed(4)+' rad';
@@ -486,7 +489,7 @@ function stopMove(dir){
   if(dir==='a'||dir==='d') sendMove('stop_turn');
   else sendMove('stop_fb');
 }
-function sendMove(dir){fetch('/move?dir='+dir).catch(function(){});}
+function sendMove(dir){fetch(ESP_URL+'/move?dir='+dir).catch(function(){});}
 function startDiag(dir){
   if(moveIv)clearInterval(moveIv);
   sendMove(dir);
@@ -502,7 +505,7 @@ function stopDiag(){
 function doCalibrate(){
   var b=document.getElementById('cal_btn');
   b.textContent='Calibrating…';b.disabled=true;
-  fetch('/calibrate').then(function(r){return r.json();}).then(function(d){
+  fetch(ESP_URL+'/calibrate').then(function(r){return r.json();}).then(function(d){
     document.getElementById('sp').value=d.sp;
     document.getElementById('sp_v').textContent=parseFloat(d.sp).toFixed(4);
     b.textContent='Calibrate Gyro & Balance Angle';b.disabled=false;
@@ -511,14 +514,13 @@ function doCalibrate(){
 function doCalibrateIR(){
   var b=document.getElementById('ir_cal_btn');
   b.textContent='Calibrating IR… (5s)';b.disabled=true;
-  fetch('/calibrateIR').then(function(){
+  fetch(ESP_URL+'/calibrateIR').then(function(){
     b.textContent='Calibrate IR Sensors';b.disabled=false;
   }).catch(function(){b.textContent='Calibrate IR Sensors';b.disabled=false;});
 }
 
 /* ── Server tab module ── */
 var SRV=(function(){
-  var SRV_URL='http://YOUR_SERVER_IP:5001';
   var POLL_MS=1000,MAX_BUF=200,DISP=50;
   var latestId=0,allRows=[];
   var tbody;
@@ -537,11 +539,11 @@ var SRV=(function(){
     else if(rm==='auto'||rm==='autonomous') mode='autonomous';
     else if(rm) mode=rm;
     return {mode:mode,
-      vel:p.v_actual!=null?p.v_actual:(p.lin_vel!=null?p.lin_vel:null),
-      ang:p.omega_actual!=null?p.omega_actual:(p.ang_vel!=null?p.ang_vel:null),
-      bat:p.battery_level!=null?p.battery_level:(p.bat_pct!=null?p.bat_pct:null),
+      vel:p.v_actual!=null?p.v_actual:(p.lin_vel!=null?p.lin_vel:(p.vel_est!=null?p.vel_est:null)),
+      ang:p.omega_actual!=null?p.omega_actual:(p.ang_vel!=null?p.ang_vel:(p.yaw_rate!=null?p.yaw_rate:(p.gyro_rate!=null?p.gyro_rate:null))),
+      bat:p.battery_level!=null?p.battery_level:(p.bat_pct!=null?p.bat_pct:(p.soc!=null?p.soc:null)),
       soc:p.soc!=null?p.soc:(p.state_of_charge!=null?p.state_of_charge:null),
-      vbat:p.vbat!=null?p.vbat:(p.voltage!=null?p.voltage:null),
+      vbat:p.vbat!=null?p.vbat:(p.voltage!=null?p.voltage:(p.bat_v!=null?p.bat_v:null)),
       obj:p.object||p.object_detected||null};
   }
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}

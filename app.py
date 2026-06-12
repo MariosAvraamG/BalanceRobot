@@ -2,17 +2,13 @@ import json
 import os
 import sqlite3
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 
 DB_PATH     = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'log.db')
 SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'schema.sql')
 
 app = Flask(__name__, static_folder='static')
 
-
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -31,9 +27,7 @@ def init_db() -> None:
     print(f'Database ready: {DB_PATH}')
 
 
-# ---------------------------------------------------------------------------
-# CORS — permissive for local dev
-# ---------------------------------------------------------------------------
+
 
 @app.after_request
 def add_cors(response):
@@ -47,15 +41,12 @@ def add_cors(response):
 def telemetry_preflight(sub):
     return '', 204
 
-
-# ---------------------------------------------------------------------------
-# Telemetry ingress
-# ---------------------------------------------------------------------------
-
 def _ingest(kind: str, source: str):
     data = request.get_json(force=True, silent=True)
     if data is None or not isinstance(data, dict):
         return jsonify({'error': 'invalid json'}), 400
+    print(f'[{source}] fields: {list(data.keys())}')
+    print(f'[{source}] values: {data}')
     try:
         conn = get_db()
         try:
@@ -87,13 +78,15 @@ def telemetry_esp_ctrl():
     return _ingest('ctrl_telemetry', 'esp-ctrl')
 
 
-# ---------------------------------------------------------------------------
-# Dashboard
-# ---------------------------------------------------------------------------
 
 @app.route('/')
 def dashboard():
-    return send_from_directory(app.static_folder, 'index.html')
+    html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'html.h')
+    with open(html_path) as f:
+        raw = f.read()
+    start = raw.find('R"html(') + len('R"html(')
+    end   = raw.rfind(')html"')
+    return raw[start:end], 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 
 @app.route('/dashboard/view')
