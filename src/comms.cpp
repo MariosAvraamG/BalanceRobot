@@ -20,7 +20,7 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
         memcpy(controllerMac, mac, 6);
         esp_now_peer_info_t peer = {};
         memcpy(peer.peer_addr, controllerMac, 6);
-        peer.channel = 1;
+        peer.channel = 11;
         peer.encrypt = false;
         peer.ifidx = WIFI_IF_AP;
         esp_now_add_peer(&peer);
@@ -60,6 +60,10 @@ static void onEspNowRecv(const uint8_t *mac, const uint8_t *data, int len)
         turnBias       = 0.0f;
         velIntegral    = 0.0f;
         yawIntegral    = 0.0f;
+        // Zero whichever background-source timer is now inactive so its
+        // deadman cannot fire while line-follow is running (or just ended).
+        lastUartMs   = 0;
+        lastEspNowMs = 0;
         Serial.printf("[CTRL] IR mode -> %s\n", lineFollowMode ? "ON" : "OFF");
     }
 

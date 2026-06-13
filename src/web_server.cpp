@@ -12,6 +12,13 @@
 
 static WebServer server(80);
 
+static void sendJSON(int code, const String& body) {
+    server.sendHeader("Access-Control-Allow-Origin",  "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(code, "application/json", body);
+}
+
 static void handleRoot()
 {
     server.send_P(200, "text/html", HTML);
@@ -50,7 +57,7 @@ static void handleSet()
     if (server.hasArg("lflsf")) lfLostSpeedFrac = constrain(server.arg("lflsf").toFloat(), 0.0f, 1.0f);
     if (server.hasArg("lfvs"))  lfVelScale      = constrain(server.arg("lfvs").toFloat(),  50.0f, 4000.0f);
     if (server.hasArg("lfms"))  lfMinSpeedFrac  = constrain(server.arg("lfms").toFloat(),  0.0f, 1.0f);
-    server.send(200, "application/json", "{\"ok\":true}");
+    sendJSON(200, "{\"ok\":true}");
 }
 
 static void handleCalibrateIR()
@@ -59,7 +66,7 @@ static void handleCalibrateIR()
     velTarget      = 0.0f;
     turnBias       = 0.0f;
     sensorsCalibrateIR();
-    server.send(200, "application/json", "{\"ok\":true}");
+    sendJSON(200, "{\"ok\":true}");
 }
 
 static void handleLineFollow()
@@ -70,10 +77,12 @@ static void handleLineFollow()
             velTarget = 0.0f;
             turnBias  = 0.0f;
         }
+        lastUartMs   = 0;
+        lastEspNowMs = 0;
     }
     char buf[48];
     snprintf(buf, sizeof(buf), "{\"ok\":true,\"lf\":%d}", (int)lineFollowMode);
-    server.send(200, "application/json", buf);
+    sendJSON(200, buf);
 }
 
 static void handleMove()
@@ -90,7 +99,7 @@ static void handleMove()
     else if (dir == "stop")      { velTarget = 0.0f; tiltSP = 0.0f; integral = 0.0f; velIntegral = 0.0f; turnBias = 0.0f; yawIntegral = 0.0f; }
     else if (dir == "stop_fb")   { velTarget = 0.0f; integral = 0.0f; velIntegral = 0.0f; }
     else if (dir == "stop_turn") { turnBias  = 0.0f; yawIntegral = 0.0f; }
-    server.send(200, "application/json", "{\"ok\":true}");
+    sendJSON(200, "{\"ok\":true}");
 }
 
 static void handleCalibrate()
@@ -111,16 +120,74 @@ static void handleCalibrate()
     calibrating = false;
     char buf[64];
     snprintf(buf, sizeof(buf), "{\"ok\":true,\"sp\":%.4f}", BALANCE_ANGLE);
-    server.send(200, "application/json", buf);
+    sendJSON(200, buf);
+}
+
+static char laptopIp[40] = LAPTOP_SERVER_IP;
+
+static void handleSetServer()
+{
+    String h = server.arg("host");
+    h.trim();
+    if (h.length() == 0 || h.length() >= sizeof(laptopIp)) {
+        server.send(400, "text/plain", "Bad host");
+        return;
+    }
+    h.toCharArray(laptopIp, sizeof(laptopIp));
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"host\":\"%s\"}", laptopIp);
+    sendJSON(200, buf);
+}
+
+static void sendTelemetryNow()
+{
+    if (!laptopIp[0]) return;
+    WiFiClient c;
+    c.setTimeout(800);
+    if (!c.connect(laptopIp, LAPTOP_SERVER_PORT)) return;
+
+    char body[320];
+    snprintf(body, sizeof(body),
+        "{\"theta\":%.4f,\"gyro_rate\":%.4f,"
+        "\"vel_est\":%.3f,\"vel_target\":%.3f,\"turn_bias\":%.3f,"
+        "\"mode\":\"%s\",\"imu_ok\":%d,"
+        "\"soc\":%.1f,\"bat_v\":%.2f,\"bat_i_motor\":%.3f,\"bat_power_w\":%.2f,"
+        "\"ir_pos\":%.0f,\"ir_steering\":%.4f,"
+        "\"uptime_s\":%lu}",
+        theta, gyro_rate,
+        velEst, velTarget, turnBias,
+        lineFollowMode ? "LINE_FOLLOW" : espNowPrimary ? "MANUAL" : "VISION",
+        (int)imuOk,
+        SoC, bat_vbat, bat_imotor, bat_power,
+        irPosition, irSteering,
+        millis() / 1000UL);
+
+    int bodyLen = strlen(body);
+    c.printf("POST /telemetry/esp-bot HTTP/1.0\r\n"
+             "Host: %s\r\n"
+             "Content-Type: application/json\r\n"
+             "Content-Length: %d\r\n"
+             "Connection: close\r\n\r\n",
+             laptopIp, bodyLen);
+    c.print(body);
+    unsigned long t0 = millis();
+    while (c.connected() && millis() - t0 < 500) {
+        if (c.available()) c.read();
+    }
+    c.stop();
 }
 
 static void handleStatus()
 {
     uint32_t upSec  = millis() / 1000;
     uint32_t calSec = lastCalibMs ? upSec - lastCalibMs / 1000 : 0;
-    char buf[1200];
+    const char* mode_str = lineFollowMode ? "LINE FOLLOW"
+                         : espNowPrimary  ? "MANUAL"
+                                          : "VISION";
+    char buf[1280];
     snprintf(buf, sizeof(buf),
-        "{\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
+        "{\"mode\":\"%s\","
+        "\"theta\":%.4f,\"setpt\":%.4f,\"gyro\":%.4f,\"err\":%.4f,\"spd\":%.2f,"
         "\"kp\":%.1f,\"kd\":%.1f,\"ki\":%.4f,\"sp\":%.4f,\"ac\":%.1f,\"mw\":%.1f,"
         "\"bias\":%.4f,\"raw\":%.4f,\"imu_ok\":%d,\"imu_err\":%lu,\"cal_s\":%lu,\"cf\":%.3f,"
         "\"velEst\":%.3f,\"velTarget\":%.3f,\"tiltSP\":%.4f,\"vint\":%.4f,"
@@ -129,6 +196,7 @@ static void handleStatus()
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
         "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
         "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f,\"qused\":%.3f}",
+        mode_str,
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
         Kp, Kd, Ki, BALANCE_ANGLE, motorAccel, maxWheelSpeed,
         gyroBias, gyro_raw, (int)imuOk, imuErrCount, calSec, CF_COEFF,
@@ -138,26 +206,48 @@ static void handleStatus()
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
         lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,
         SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem, bat_qused);
-    server.send(200, "application/json", buf);
+    sendJSON(200, buf);
 }
 
 void webServerInit()
 {
     WiFi.softAP("BalanceBot2", "balance123", WIFI_CHANNEL);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    Serial.printf("Web tuner: connect to WiFi 'BalanceBot2' then open http://%s\n",
+    Serial.printf("AP ready — command endpoint http://%s\n",
                   WiFi.softAPIP().toString().c_str());
 
-    server.on("/",           handleRoot);
-    server.on("/set",        handleSet);
-    server.on("/move",       handleMove);
-    server.on("/calibrate",  handleCalibrate);
-    server.on("/status",     handleStatus);
-    server.on("/linefollow",   handleLineFollow);
-    server.on("/calibrateIR",  handleCalibrateIR);
+    if (WIFI_STA_SSID[0]) {
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASS);
+        WiFi.setAutoReconnect(true);
+        Serial.printf("[WiFi] Connecting STA to '%s'...\n", WIFI_STA_SSID);
+    }
+
+    server.on("/",            handleRoot);
+    server.on("/set",         handleSet);
+    server.on("/move",        handleMove);
+    server.on("/calibrate",   handleCalibrate);
+    server.on("/status",      handleStatus);
+    server.on("/linefollow",  handleLineFollow);
+    server.on("/calibrateIR", handleCalibrateIR);
+    server.on("/setserver",   handleSetServer);
+    server.onNotFound([]() {
+        server.sendHeader("Access-Control-Allow-Origin",  "*");
+        server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+        if (server.method() == HTTP_OPTIONS) server.send(204);
+        else server.send(404, "text/plain", "Not Found");
+    });
     server.begin();
 
-    xTaskCreatePinnedToCore(
-        [](void*){ for(;;){ server.handleClient(); vTaskDelay(1); } },
-        "web", 12288, nullptr, 1, nullptr, 0);
+    xTaskCreatePinnedToCore([](void*) {
+        for (;;) { server.handleClient(); vTaskDelay(1); }
+    }, "web", 8192, nullptr, 1, nullptr, 0);
+
+    xTaskCreatePinnedToCore([](void*) {
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(TELEMETRY_INTERVAL_MS));
+            sendTelemetryNow();
+        }
+    }, "telemetry", 6144, nullptr, 1, nullptr, 0);
 }

@@ -3,7 +3,7 @@
 float Kp            = 2100.0f;
 float Kd            =  240.0f;
 float Ki            =    9.0f;
-float BALANCE_ANGLE =   0.06f;
+float BALANCE_ANGLE =   0.066f;
 float CF_COEFF      =  0.996f;
 
 float maxWheelSpeed  = 7.0f;
@@ -65,12 +65,12 @@ float bat_qused  = 0.0f;
 
 bool  lineFollowMode  = false;
 bool  espNowPrimary   = true;
-float lineFollowSpeed = 1.6f;
-float Kp_ir           = 0.007f;
+float lineFollowSpeed = 2.5f;
+float Kp_ir           = 0.008f;
 float Ki_ir           = 0.0003f;
-float Kd_ir           = 0.005f;
+float Kd_ir           = 0.014f;
 float irPosition      = -1.0f;
 float irSteering      = 0.0f;
 float lfLostSpeedFrac = 0.05f;
-float lfVelScale      = 750.0f;
-float lfMinSpeedFrac  = 0.10f;
+float lfVelScale      = 450.0f;
+float lfMinSpeedFrac  = 0.20f;
