@@ -31,11 +31,21 @@ const int BAT_PIN_ILOGIC = 34;
 const int BATTERY_INTERVAL_MS = 5000;
 
 // ── WiFi / ESP-NOW ────────────────────────────────────────────────
-const int WIFI_CHANNEL = 1;  // SoftAP channel — controller must match this
+const int WIFI_CHANNEL = 11;  // SoftAP channel — controller must match this
+
+// ── Shared WiFi (hotspot the ESP32 joins as STA) ─────────────────
+// Used for laptop telemetry server; laptop accesses Pi camera directly.
+#define WIFI_STA_SSID   "Three_5E51"
+#define WIFI_STA_PASS   "_tpj7877X3"
+
+// ── Laptop telemetry server ───────────────────────────────────────
+#define LAPTOP_SERVER_IP    "192.168.1.172"   // laptop's IP on the shared network
+const int LAPTOP_SERVER_PORT    = 5001;
+const int TELEMETRY_INTERVAL_MS = 500;
 
 // ── WS2812B LED strip ─────────────────────────────────────────────
 const int WS2812B_PIN = 17;
-const int WS2812B_NUM = 14;   // change to match actual LED count
+const int WS2812B_NUM = 14;
 
 // ── Fixed control limits ──────────────────────────────────────────
 const float MAX_INTEGRAL = 0.1f;

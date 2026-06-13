@@ -88,7 +88,10 @@ void velLoopUpdate()
 
 void deadManCheck()
 {
-    if (lastEspNowMs && millis() - lastEspNowMs > 500) {
+    // ESP-NOW deadman: active in ESP-NOW mode and during line follow
+    // (lineFollowUpdate refreshes lastEspNowMs each tick; stops refreshing on line-lost)
+    if ((espNowPrimary || lineFollowMode) &&
+        lastEspNowMs && millis() - lastEspNowMs > 500) {
         velTarget    = 0.0f;
         turnBias     = 0.0f;
         velIntegral  = 0.0f;
@@ -96,7 +99,9 @@ void deadManCheck()
         lastEspNowMs = 0;
     }
 
-    if (lastUartMs && millis() - lastUartMs > 2000) {
+    // UART deadman: only active when UART is the command source
+    if (!espNowPrimary && !lineFollowMode &&
+        lastUartMs && millis() - lastUartMs > 2000) {
         velTarget   = 0.0f;
         turnBias    = 0.0f;
         velIntegral = 0.0f;
