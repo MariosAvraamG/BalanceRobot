@@ -9,7 +9,7 @@ static const uint8_t NUM_SENSORS            = 5;
 static const uint8_t SENSOR_CH[NUM_SENSORS] = {3, 2, 1, 0, 4};  // right → left (0 = hard right, 4000 = hard left)
 static const int     SETPOINT               = 2000;  // centre of 0–4000 range
 static const float   LF_DT                  = 0.020f; // 50 Hz tick — keeps derivative/integral on same scale
-static const float   LF_INTEGRAL_MAX_DEFAULT = 500.0f; // anti-windup fallback when Ki_ir == 0
+static const float   LF_INTEGRAL_MAX_DEFAULT = 250.0f; // anti-windup fallback when Ki_ir == 0
 
 static uint16_t calMin[NUM_SENSORS];
 static uint16_t calMax[NUM_SENSORS];
@@ -98,7 +98,7 @@ void printIR()
 void lineFollowUpdate()
 {
     static bool  prevMode      = false;
-    static bool  prevLineValid = false;  // false → seed lfLastProp on next valid reading
+    static bool  prevLineValid = false;
     static float lfIntegral    = 0.0f;
     static int   lfLastProp    = 0;
     static unsigned long lfTimer = 0;
