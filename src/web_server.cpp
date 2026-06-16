@@ -57,6 +57,8 @@ static void handleSet()
     if (server.hasArg("lflsf")) lfLostSpeedFrac = constrain(server.arg("lflsf").toFloat(), 0.0f, 1.0f);
     if (server.hasArg("lfvs"))  lfVelScale      = constrain(server.arg("lfvs").toFloat(),  50.0f, 4000.0f);
     if (server.hasArg("lfms"))  lfMinSpeedFrac  = constrain(server.arg("lfms").toFloat(),  0.0f, 1.0f);
+    if (server.hasArg("iea"))   IR_EMA_ALPHA    = constrain(server.arg("iea").toFloat(),   0.01f, 1.0f);
+    if (server.hasArg("iem"))   IR_ERROR_MAX    = constrain(server.arg("iem").toFloat(),   100.0f, 2000.0f);
     sendJSON(200, "{\"ok\":true}");
 }
 
@@ -205,7 +207,7 @@ static void handleStatus()
         "\"kpv\":%.4f,\"kvi\":%.5f,\"mvi\":%.1f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
         "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
-        "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
+        "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,\"iea\":%.2f,\"iem\":%.0f,"
         "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f,\"qused\":%.3f}",
         mode_str,
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
@@ -215,7 +217,7 @@ static void handleStatus()
         Kp_vel, Ki_vel, velIntMax, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
         yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
-        lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,
+        lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac, IR_EMA_ALPHA, IR_ERROR_MAX,
         SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem, bat_qused);
     sendJSON(200, buf);
 }

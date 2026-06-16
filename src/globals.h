@@ -80,3 +80,5 @@ extern float irSteering;
 extern float lfLostSpeedFrac;  // speed fraction (0–1) when line is lost
 extern float lfVelScale;       // error magnitude (counts) at which speed bottoms out
 extern float lfMinSpeedFrac;   // minimum speed fraction (0–1) on sharp curves
+extern float IR_EMA_ALPHA;     // EMA smoothing on IR error (1 = no filtering)
+extern float IR_ERROR_MAX;     // clamp on IR error magnitude (counts) before PID
