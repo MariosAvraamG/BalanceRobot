@@ -192,8 +192,22 @@ void loop() {
   float xNorm =  -normalizeJoystick(xRaw, X_CENTER);
   float yNorm = -normalizeJoystick(yRaw, Y_CENTER);
 
-  velTarget = xNorm * MAX_LINEAR_VEL;
-  turnBias = yNorm * MAX_ANGULAR_VEL;
+  if(xNorm == 0.0f && yNorm == 0.0f){
+    velTarget = 0.0f;
+    turnBias = 0.0f;
+  }
+  else if(xNorm == 0.0f && yNorm != 0.0f){
+    velTarget = 0.0f;
+    turnBias = yNorm * MAX_ANGULAR_VEL;
+  }
+  else if(xNorm != 0.0f && yNorm == 0.0f){
+    velTarget = xNorm * MAX_LINEAR_VEL;
+    turnBias = 0.0f;
+  }
+  else {
+      velTarget = xNorm * MAX_LINEAR_VEL;
+      turnBias = yNorm * MAX_ANGULAR_VEL;
+  }
 
   static int screen = 0; 
   static unsigned long lastToggleMillis = 0;
