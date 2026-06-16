@@ -57,8 +57,6 @@ static void handleSet()
     if (server.hasArg("lflsf")) lfLostSpeedFrac = constrain(server.arg("lflsf").toFloat(), 0.0f, 1.0f);
     if (server.hasArg("lfvs"))  lfVelScale      = constrain(server.arg("lfvs").toFloat(),  50.0f, 4000.0f);
     if (server.hasArg("lfms"))  lfMinSpeedFrac  = constrain(server.arg("lfms").toFloat(),  0.0f, 1.0f);
-    if (server.hasArg("iea"))   IR_EMA_ALPHA    = constrain(server.arg("iea").toFloat(),   0.01f, 1.0f);
-    if (server.hasArg("iem"))   IR_ERROR_MAX    = constrain(server.arg("iem").toFloat(),   100.0f, 2000.0f);
     sendJSON(200, "{\"ok\":true}");
 }
 
@@ -141,17 +139,6 @@ static void handleSetServer()
     sendJSON(200, buf);
 }
 
-// Opt-in STA connect, only used when the laptop telemetry link is wanted.
-// Left disconnected by default so BalanceBot2's AP never channel-follows
-// and stays reachable for debugging.
-static void handleConnectSta()
-{
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASS);
-    WiFi.setAutoReconnect(true);
-    sendJSON(200, "{\"ok\":true}");
-}
-
 static void sendTelemetryNow()
 {
     if (!laptopIp[0]) return;
@@ -207,7 +194,7 @@ static void handleStatus()
         "\"kpv\":%.4f,\"kvi\":%.5f,\"mvi\":%.1f,\"mts\":%.3f,\"vs\":%.1f,\"mvt\":%.1f,\"ema\":%.2f,\"trns\":%.1f,\"mtb\":%.1f,"
         "\"yaw_rate\":%.4f,\"yawCorr\":%.4f,\"yawInt\":%.4f,\"turnBias\":%.3f,\"kyp\":%.4f,\"kiy\":%.5f,\"kdy\":%.4f,\"yea\":%.2f,\"biasZ\":%.4f,"
         "\"lf\":%d,\"lfs\":%.3f,\"irPos\":%.0f,\"irCorr\":%.4f,\"kpir\":%.5f,\"kiir\":%.5f,\"kdir\":%.5f,"
-        "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,\"iea\":%.2f,\"iem\":%.0f,"
+        "\"lflsf\":%.2f,\"lfvs\":%.0f,\"lfms\":%.2f,"
         "\"soc\":%.1f,\"vbat\":%.2f,\"imotor\":%.3f,\"ilogic\":%.3f,\"power\":%.2f,\"energy\":%.2f,\"trem\":%.0f,\"qused\":%.3f}",
         mode_str,
         theta, BALANCE_ANGLE + tiltSP, gyro_rate, BALANCE_ANGLE - theta, step1.getSpeedRad(),
@@ -217,7 +204,7 @@ static void handleStatus()
         Kp_vel, Ki_vel, velIntMax, MAX_TILT_SP, VEL_STEP, MAX_VEL_TARGET, EMA_ALPHA, TURN_STEP, MAX_TURN_BIAS,
         yaw_rate, yawCorrection, yawIntegral, turnBias, Kp_yaw, Ki_yaw, Kd_yaw, YAW_EMA_ALPHA, gyroBiasZ,
         (int)lineFollowMode, lineFollowSpeed, irPosition, irSteering, Kp_ir, Ki_ir, Kd_ir,
-        lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac, IR_EMA_ALPHA, IR_ERROR_MAX,
+        lfLostSpeedFrac, lfVelScale, lfMinSpeedFrac,
         SoC, bat_vbat, bat_imotor, bat_ilogic, bat_power, bat_energy, bat_trem, bat_qused);
     sendJSON(200, buf);
 }
@@ -229,11 +216,12 @@ void webServerInit()
     Serial.printf("AP ready — command endpoint http://%s\n",
                   WiFi.softAPIP().toString().c_str());
 
-    // STA deliberately NOT started at boot. AP+STA forces the softAP to
-    // channel-follow whatever channel the STA connects on, and repeated
-    // connect/reconnect attempts to the external network were knocking
-    // BalanceBot2's AP offline. Debug UI access takes priority over the
-    // laptop telemetry link — use /connectsta to opt in when needed.
+    if (WIFI_STA_SSID[0]) {
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASS);
+        WiFi.setAutoReconnect(true);
+        Serial.printf("[WiFi] Connecting STA to '%s'...\n", WIFI_STA_SSID);
+    }
 
     server.on("/",            handleRoot);
     server.on("/set",         handleSet);
@@ -243,7 +231,6 @@ void webServerInit()
     server.on("/linefollow",  handleLineFollow);
     server.on("/calibrateIR", handleCalibrateIR);
     server.on("/setserver",   handleSetServer);
-    server.on("/connectsta",  handleConnectSta);
     server.onNotFound([]() {
         server.sendHeader("Access-Control-Allow-Origin",  "*");
         server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -260,7 +247,7 @@ void webServerInit()
     xTaskCreatePinnedToCore([](void*) {
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(TELEMETRY_INTERVAL_MS));
-            if (WiFi.status() == WL_CONNECTED) sendTelemetryNow();
+            sendTelemetryNow();
         }
     }, "telemetry", 6144, nullptr, 1, nullptr, 0);
 }
