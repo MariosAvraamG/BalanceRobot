@@ -100,7 +100,8 @@ void lineFollowUpdate()
     static bool  prevMode      = false;
     static bool  prevLineValid = false;
     static float lfIntegral    = 0.0f;
-    static int   lfLastProp    = 0;
+    static float lfLastProp    = 0.0f;
+    static float irFilt        = 0.0f;
     static unsigned long lfTimer = 0;
 
     bool modeJustEnabled = (lineFollowMode && !prevMode);
@@ -125,26 +126,33 @@ void lineFollowUpdate()
 
     int proportional = pos - SETPOINT;
 
-    // On mode-enable or reacquisition after loss, seed lfLastProp from actual position
-    // so the first derivative sample is 0 instead of a spike from the initial offset.
+    // On mode-enable or reacquisition after loss, seed lfLastProp/irFilt from actual
+    // position so the first derivative sample is 0 instead of a spike from the
+    // initial offset.
     if (!prevLineValid || modeJustEnabled) {
         lfIntegral = 0.0f;
-        lfLastProp = proportional;
+        lfLastProp = (float)proportional;
+        irFilt     = (float)proportional;
     }
     prevLineValid = true;
 
-    float derivative   = (float)(proportional - lfLastProp) / LF_DT;  // [counts/s]
-    lfLastProp = proportional;
+    // Smooth the raw error before it feeds the PID terms, then clamp its
+    // magnitude so a single noisy/extreme reading can't saturate the output.
+    irFilt = IR_EMA_ALPHA * (float)proportional + (1.0f - IR_EMA_ALPHA) * irFilt;
+    float filtProp = constrain(irFilt, -IR_ERROR_MAX, IR_ERROR_MAX);
 
-    lfIntegral += (float)proportional * LF_DT;  // [count·s]
+    float derivative   = (filtProp - lfLastProp) / LF_DT;  // [counts/s]
+    lfLastProp = filtProp;
+
+    lfIntegral += filtProp * LF_DT;  // [count·s]
 
     // Anti-windup: clamp integral to what's physically reachable at MAX_TURN_BIAS
     float lfIntMax = (Ki_ir > 1e-6f) ? (MAX_TURN_BIAS / Ki_ir) : LF_INTEGRAL_MAX_DEFAULT;
     lfIntegral = constrain(lfIntegral, -lfIntMax, lfIntMax);
 
-    irSteering = (float)proportional * Kp_ir
-               + lfIntegral          * Ki_ir
-               + derivative          * Kd_ir;
+    irSteering = filtProp * Kp_ir
+               + lfIntegral * Ki_ir
+               + derivative * Kd_ir;
 
     // Reduce speed proportional to error so tight curves are tracked at lower speed
     float speedFactor = constrain(1.0f - fabsf((float)proportional) / lfVelScale,
