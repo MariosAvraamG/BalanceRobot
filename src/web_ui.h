@@ -105,7 +105,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
       <div class="row"><label>Ki yaw</label><input type="range" id="kiy" min="0" max="0.5" step="0.005" oninput="send('kiy',this.value)"><span class="val" id="kiy_v">—</span></div>
       <div class="row"><label>Yaw EMA</label><input type="range" id="yea" min="0.01" max="1" step="0.01" oninput="send('yea',this.value)"><span class="val" id="yea_v">—</span></div>
       <div class="row"><label>Yaw step</label><input type="range" id="trns" min="0.1" max="5" step="0.1" oninput="send('trns',this.value)"><span class="val" id="trns_v">—</span></div>
-      <div class="row"><label>Max yaw</label><input type="range" id="mtb" min="0.5" max="10" step="0.5" oninput="send('mtb',this.value)"><span class="val" id="mtb_v">—</span></div>
+      <div class="row"><label>Max yaw</label><input type="range" id="mtb" min="0" max="1.5" step="0.1" oninput="send('mtb',this.value)"><span class="val" id="mtb_v">—</span></div>
       <div class="dpad">
         <button class="dbtn" onpointerdown="startDiag('wa')" onpointerup="stopDiag()" onpointerleave="stopDiag()">&#8598;</button>
         <button class="dbtn" onpointerdown="startMove('w')" onpointerup="stopMove('w')" onpointerleave="stopMove('w')">&#9650;</button>
@@ -126,6 +126,8 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
       <div class="row"><label>Lost spd</label><input type="range" id="lflsf" min="0" max="1" step="0.05" oninput="send('lflsf',this.value)"><span class="val" id="lflsf_v">—</span></div>
       <div class="row"><label>Spd scale</label><input type="range" id="lfvs" min="200" max="2000" step="50" oninput="send('lfvs',this.value)"><span class="val" id="lfvs_v">—</span></div>
       <div class="row"><label>Min spd</label><input type="range" id="lfms" min="0.1" max="1" step="0.05" oninput="send('lfms',this.value)"><span class="val" id="lfms_v">—</span></div>
+      <div class="row"><label>IR EMA α</label><input type="range" id="iea" min="0.01" max="1" step="0.01" oninput="send('iea',this.value)"><span class="val" id="iea_v">—</span></div>
+      <div class="row"><label>Max IR err</label><input type="range" id="iem" min="100" max="2000" step="50" oninput="send('iem',this.value)"><span class="val" id="iem_v">—</span></div>
       <div class="tele" style="margin:4px 0">
         <div><span class="k">IR pos  </span><span class="v" id="t_ip">—</span></div>
         <div><span class="k">IR corr </span><span class="v" id="t_ic">—</span></div>
@@ -137,7 +139,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
 </div>
 <script>
 function send(p,v){
-  var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:p==='lfvs'?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+  var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:(p==='lfvs'||p==='iem')?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea'||p==='iea')?2:1;
   document.getElementById(p+'_v').textContent=parseFloat(v).toFixed(dp);
   fetch('/set?'+p+'='+v);
 }
@@ -189,9 +191,9 @@ function poll(){
     imuEl.textContent=d.imu_ok?'OK':'ERROR';
     imuEl.style.color=d.imu_ok?'#4f4':'#f44';
     if(!inited){inited=true;
-      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea','kpir','kiir','kdir','lflsf','lfvs','lfms'].forEach(function(p){
+      ['kp','kd','ki','ac','cf','sp','kpv','kvi','mvi','mts','vs','ema','trns','mtb','kyp','kdy','kiy','yea','kpir','kiir','kdir','lflsf','lfvs','lfms','iea','iem'].forEach(function(p){
         document.getElementById(p).value=d[p]||0;
-        var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:p==='lfvs'?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea')?2:1;
+        var dp=p==='kdir'?5:(p==='sp'||p==='ki'||p==='kpv'||p==='kvi'||p==='kiy'||p==='kpir'||p==='kiir')?4:(p==='lflsf'||p==='lfms')?2:(p==='lfvs'||p==='iem')?0:(p==='cf'||p==='mts'||p==='kyp'||p==='kdy')?3:(p==='ema'||p==='yea'||p==='iea')?2:1;
         document.getElementById(p+'_v').textContent=parseFloat(d[p]||0).toFixed(dp);
       });
       ['mw','mvt','lfs'].forEach(function(p){
