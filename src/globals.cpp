@@ -65,12 +65,12 @@ float bat_qused  = 0.0f;
 
 bool  lineFollowMode  = false;
 bool  espNowPrimary   = true;
-float lineFollowSpeed = 2.5f;
-float Kp_ir           = 0.008f;
+float lineFollowSpeed = 1.2f;
+float Kp_ir           = 0.007f;
 float Ki_ir           = 0.0003f;
-float Kd_ir           = 0.014f;
+float Kd_ir           = 0.012f;
 float irPosition      = -1.0f;
 float irSteering      = 0.0f;
 float lfLostSpeedFrac = 0.05f;
-float lfVelScale      = 450.0f;
-float lfMinSpeedFrac  = 0.20f;
+float lfVelScale      = 750.0f;
+float lfMinSpeedFrac  = 0.10f;

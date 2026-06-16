@@ -139,6 +139,17 @@ static void handleSetServer()
     sendJSON(200, buf);
 }
 
+// Opt-in STA connect, only used when the laptop telemetry link is wanted.
+// Left disconnected by default so BalanceBot2's AP never channel-follows
+// and stays reachable for debugging.
+static void handleConnectSta()
+{
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASS);
+    WiFi.setAutoReconnect(true);
+    sendJSON(200, "{\"ok\":true}");
+}
+
 static void sendTelemetryNow()
 {
     if (!laptopIp[0]) return;
@@ -216,12 +227,11 @@ void webServerInit()
     Serial.printf("AP ready — command endpoint http://%s\n",
                   WiFi.softAPIP().toString().c_str());
 
-    if (WIFI_STA_SSID[0]) {
-        WiFi.mode(WIFI_AP_STA);
-        WiFi.begin(WIFI_STA_SSID, WIFI_STA_PASS);
-        WiFi.setAutoReconnect(true);
-        Serial.printf("[WiFi] Connecting STA to '%s'...\n", WIFI_STA_SSID);
-    }
+    // STA deliberately NOT started at boot. AP+STA forces the softAP to
+    // channel-follow whatever channel the STA connects on, and repeated
+    // connect/reconnect attempts to the external network were knocking
+    // BalanceBot2's AP offline. Debug UI access takes priority over the
+    // laptop telemetry link — use /connectsta to opt in when needed.
 
     server.on("/",            handleRoot);
     server.on("/set",         handleSet);
@@ -231,6 +241,7 @@ void webServerInit()
     server.on("/linefollow",  handleLineFollow);
     server.on("/calibrateIR", handleCalibrateIR);
     server.on("/setserver",   handleSetServer);
+    server.on("/connectsta",  handleConnectSta);
     server.onNotFound([]() {
         server.sendHeader("Access-Control-Allow-Origin",  "*");
         server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -247,7 +258,7 @@ void webServerInit()
     xTaskCreatePinnedToCore([](void*) {
         for (;;) {
             vTaskDelay(pdMS_TO_TICKS(TELEMETRY_INTERVAL_MS));
-            sendTelemetryNow();
+            if (WiFi.status() == WL_CONNECTED) sendTelemetryNow();
         }
     }, "telemetry", 6144, nullptr, 1, nullptr, 0);
 }
