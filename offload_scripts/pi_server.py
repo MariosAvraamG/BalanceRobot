@@ -17,7 +17,7 @@ latest_frame = None
 frame_lock = threading.Lock()
 
 command_queue = queue.Queue()
-ultrasound_override = False
+ultrasound_override = threading.Event()
 
 curr_object = None
 object_lock = threading.Lock()
@@ -49,32 +49,47 @@ class ultrasoundSensor:
             time.sleep(0.00001)
             GPIO.output(GPIO_PIN_TRIG, GPIO.LOW)
 
+            timeout = time.monotonic() + 0.03
             start = time.monotonic()
-            end = time.monotonic()
+            i = 0
             while GPIO.input(GPIO_PIN_ECHO) == GPIO.LOW:
                 start = time.monotonic()
+                # if start > timeout:
+                #     return None
+
+            timeout = time.monotonic() + 0.03
+            end = time.monotonic()
             while GPIO.input(GPIO_PIN_ECHO) == GPIO.HIGH:
                 end = time.monotonic()
-            diff = end-start
-            samples.append(diff/2)
+                # if end > timeout:
+                #     return None
+
+            diff = end - start
+            samples.append(diff / 2)
             time.sleep(0.05)
         samples.sort()
-        med = samples[len(samples)//2]
+        med = samples[len(samples) // 2]
         print(f"med: {med}")
-        return med*340*100
+        return med * 340 * 100
     
 def ultrasound_loop():
-    global ultrasound_override
     time.sleep(2)
+    print("start ultrasound sensor")
     ultrasound = ultrasoundSensor()
     while True:
+        time.sleep(2)
         dist = ultrasound.get_distance(5)
+        if dist is None:
+            print("ultrasound timeout — no echo received")
+            ultrasound_override.clear()
+            continue
         print(f"distance detected: {dist}cm")
-        if dist < 20:
-            ultrasound_override = True
+        if dist < 10:
+            print("queuing ultrasound")
+            ultrasound_override.set()
             command_queue.put((0.0, 0.0))
         else:
-            ultrasound_override = False
+            ultrasound_override.clear()
 
 def serial_writer_loop():
     while True:
@@ -82,6 +97,7 @@ def serial_writer_loop():
             linear_vel, angular_vel = command_queue.get(timeout=0.1)
             packet = PACKET_HEADER + struct.pack('<ff', linear_vel, angular_vel)
             ser.write(packet)
+            print(f"wrote message via serial: linear: {linear_vel}, angular: {angular_vel}")
         except queue.Empty:
             continue
 
@@ -136,13 +152,14 @@ def stream():
 
 @app.route("/command", methods=["POST"])
 def command():
-    if ultrasound_override:
+    if ultrasound_override.is_set():
         return jsonify({"status": "blocked", "reason": "obstacle detected"})
         
     data = request.get_json(force=True)
     linear_vel  = float(data.get("linear_vel", 0.0))
     angular_vel = float(data.get("angular_vel", 0.0))
     tracked_object = data.get("tracked_object", None)
+    print(f"got tracked object: {tracked_object}")
 
     global curr_object
     with object_lock:
@@ -161,6 +178,11 @@ def object():
 @app.route("/")
 def index():
     return redirect(url_for("/stream"))
+
+@app.after_request
+def add_cors(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 
 if __name__ == "__main__":
