@@ -7,8 +7,19 @@ import numpy as np
 import requests
 from ultralytics import YOLO
 from pynput import keyboard as pynput_kb
+from flask import Flask, Response, request, jsonify, redirect, url_for
+from PIL import Image
+import io
+
+
+app = Flask(__name__)
+frame_lock = threading.Lock()
+latest_frame = None
+JPEG_QUALITY    = 80
+
 
 PORT = 5000
+
 DEFAULT_IP = "youssef.local"
 
 MAX_ANGULAR_VEL = 0.5
@@ -276,6 +287,12 @@ def display_stream(pi_ip: str, track_class_id: int):
             text = f"lin: {cmd.linear_vel:+.2f}  ang: {cmd.angular_vel:+.2f}"
             cv2.putText(frame, text, (8, 24),cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1)
 
+            jpeg_buf = io.BytesIO()
+            Image.fromarray(frame[:, :, ::-1]).save(jpeg_buf, format="JPEG", quality=JPEG_QUALITY)
+            global latest_frame
+            with frame_lock:
+                latest_frame = jpeg_buf.getvalue()
+
             cv2.imshow("Pi Camera Stream - YOLOv8n", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -285,6 +302,25 @@ def display_stream(pi_ip: str, track_class_id: int):
     finally:
         cv2.destroyAllWindows()
 
+def generate_mjpeg():
+    global latest_frame
+    while True:
+        with frame_lock:
+            jpeg = latest_frame
+        if jpeg:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n"
+                + jpeg + b"\r\n"
+            )
+        time.sleep(0.05)
+
+@app.route("/stream")
+def stream():
+    return Response(
+        generate_mjpeg(),
+        mimetype="multipart/x-mixed-replace; boundary=frame"
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pi camera MJPEG viewer with object tracking")
@@ -300,4 +336,9 @@ if __name__ == "__main__":
     kb_listener = pynput_kb.Listener(on_press=_on_press)
     kb_listener.daemon = True
     kb_listener.start()
+
+    server_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=8000), daemon=True)
+    print(f"Server running on http://0.0.0.0:{8000}")
+    server_thread.start()
+
     display_stream(args.ip, class_id)

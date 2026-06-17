@@ -69,7 +69,6 @@ class ultrasoundSensor:
             time.sleep(0.05)
         samples.sort()
         med = samples[len(samples) // 2]
-        print(f"med: {med}")
         return med * 340 * 100
     
 def ultrasound_loop():
