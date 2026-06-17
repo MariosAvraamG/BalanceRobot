@@ -110,7 +110,7 @@ input[type=range]{flex:1;accent-color:#4af;height:14px}
     <div class="cam-card">
       <span class="lbl">CAMERA FEED</span>
       <div class="cam-wrap">
-        <img id="cam_img" src="http://192.168.1.50:8000" alt=""
+        <img id="cam_img" src="http://192.168.1.50:8000/stream" alt=""
              onload="document.getElementById('no_cam').style.display='none'"
              onerror="camError()">
         <div class="no-cam" id="no_cam">
@@ -337,7 +337,7 @@ function camError(){
   clearTimeout(camRetryTimer);
   camRetryTimer=setTimeout(function(){
     img.style.display='block';
-    img.src='http://192.168.1.50:8000?t='+Date.now();
+    img.src='http://192.168.1.50:8000/stream?t='+Date.now();
   },4000);
 }
 
@@ -439,7 +439,7 @@ function poll(){
     document.getElementById('d_mtr').textContent=d.spd.toFixed(2);
 
     /* Dashboard tracking */
-    document.getElementById('d_obj').textContent=d.trackedObj||'None';
+    if(!lastTrackedObj) document.getElementById('d_obj').textContent='None';
 
     /* Init sliders once */
     if(!inited){inited=true;
@@ -460,6 +460,16 @@ function poll(){
 
 /* ── 5-second telemetry logger ── */
 var lastStatus=null;
+var lastTrackedObj=null;
+function pollObject(){
+  fetch('http://192.168.1.42:5000/object').then(function(r){return r.json();}).then(function(d){
+    if(d.current_object){
+      lastTrackedObj=d.current_object;
+      document.getElementById('d_obj').textContent=lastTrackedObj;
+      fetch(SRV_URL+'/vision/object',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({object:lastTrackedObj})}).catch(function(){});
+    }
+  }).catch(function(){});
+}
 function logToServer(){
   if(!lastStatus) return;
   var d=lastStatus;
@@ -472,7 +482,8 @@ function logToServer(){
       omega_actual:parseFloat((d.yaw_rate||0).toFixed(4)),
       soc:parseFloat((d.soc||0).toFixed(1)),
       battery_level:parseFloat((d.soc||0).toFixed(1)),
-      vbat:parseFloat((d.vbat||0).toFixed(2))
+      vbat:parseFloat((d.vbat||0).toFixed(2)),
+      object:lastTrackedObj
     })
   }).catch(function(){});
 }
@@ -544,7 +555,7 @@ var SRV=(function(){
       bat:p.battery_level!=null?p.battery_level:(p.bat_pct!=null?p.bat_pct:(p.soc!=null?p.soc:null)),
       soc:p.soc!=null?p.soc:(p.state_of_charge!=null?p.state_of_charge:null),
       vbat:p.vbat!=null?p.vbat:(p.voltage!=null?p.voltage:(p.bat_v!=null?p.bat_v:null)),
-      obj:p.object||p.object_detected||null};
+      obj:p.object||p.object_detected||p.current_object||null};
   }
   function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
   function fmtU(n,d,u){return(n===null||n===undefined)?'<span class="srv-dim">—</span>':Number(n).toFixed(d)+' '+u;}
@@ -607,6 +618,7 @@ var SRV=(function(){
 })();
 
 setInterval(logToServer,5000);
+setInterval(pollObject,1000);pollObject();
 setInterval(poll,500);poll();
 </script></body></html>
 )html";

@@ -9,6 +9,8 @@ SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'schema.s
 
 app = Flask(__name__, static_folder='static')
 
+_latest_object = {'name': None}
+
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -45,6 +47,8 @@ def _ingest(kind: str, source: str):
     data = request.get_json(force=True, silent=True)
     if data is None or not isinstance(data, dict):
         return jsonify({'error': 'invalid json'}), 400
+    if _latest_object['name'] and 'object' not in data:
+        data['object'] = _latest_object['name']
     print(f'[{source}] fields: {list(data.keys())}')
     print(f'[{source}] values: {data}')
     try:
@@ -77,6 +81,30 @@ def telemetry_esp_bot():
 def telemetry_esp_ctrl():
     return _ingest('ctrl_telemetry', 'esp-ctrl')
 
+
+# ---------------------------------------------------------------------------
+# Vision — object detection from Pi
+# ---------------------------------------------------------------------------
+
+@app.route('/vision/object', methods=['POST'])
+def vision_object():
+    data = request.get_json(force=True, silent=True)
+    if not data or 'object' not in data:
+        return jsonify({'error': 'missing object field'}), 400
+    name = str(data['object']).strip()
+    if name:
+        _latest_object['name'] = name
+        print(f'[vision] detected: {name}')
+    return jsonify({'status': 'ok', 'object': name})
+
+@app.route('/vision/object', methods=['DELETE'])
+def vision_clear():
+    _latest_object['name'] = None
+    return jsonify({'status': 'ok'})
+
+@app.route('/vision/latest')
+def vision_latest():
+    return jsonify({'object': _latest_object['name']})
 
 
 @app.route('/')
