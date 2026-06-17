@@ -337,7 +337,7 @@ function camError(){
   clearTimeout(camRetryTimer);
   camRetryTimer=setTimeout(function(){
     img.style.display='block';
-    img.src='http://192.168.1.50:8000/stream?t='+Date.now();
+    img.src='http://192.168.1.50:8000/stream';
   },4000);
 }
 
