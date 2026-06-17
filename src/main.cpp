@@ -98,6 +98,7 @@ void IRAM_ATTR isrSw() {
 void onSent(const uint8_t *mac_addr, esp_now_send_status_t status) {}
 
 void onRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
+  Serial.println("got a package");
   if (len != sizeof(EspNowStatus)) return;
   portENTER_CRITICAL_ISR(&statusMux);
   memcpy(&incomingStatus, data, sizeof(EspNowStatus));
@@ -132,7 +133,9 @@ void sendCmd() {
   outgoingMessage.btn_red     = red;
   outgoingMessage.btn_blue    = blue;
   outgoingMessage.btn_green   = green;
-
+  Serial.println(String(outgoingMessage.linear_vel) + " " + String(outgoingMessage.angular_vel) + " " +
+    String(outgoingMessage.btn_red) + " " + String(outgoingMessage.btn_blue) + " " +
+    String(outgoingMessage.btn_green));
   esp_now_send(receiverMac, (uint8_t *)&outgoingMessage, sizeof(outgoingMessage));
 }
 
@@ -162,7 +165,7 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  esp_wifi_set_channel(11, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
   Serial.printf("Controller MAC: %s\n", WiFi.macAddress().c_str());
 
   if (esp_now_init() != ESP_OK) {
@@ -174,7 +177,7 @@ void setup() {
 
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, receiverMac, 6);
-  peerInfo.channel = 11;
+  peerInfo.channel = 6;
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
