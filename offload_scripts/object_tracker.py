@@ -214,11 +214,6 @@ def display_stream(pi_ip: str, track_class_id: int):
             jpg = segment[jpg_start:jpg_end + 2]
 
             decode_time = time.time()
-            if capture_time:
-                latency["frame_ms"] = (decode_time - capture_time) * 1000
-            if last_frame_time:
-                latency["fps"] = 1.0 / (decode_time - last_frame_time)
-            last_frame_time = decode_time
 
             frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
             if frame is None:
@@ -226,9 +221,7 @@ def display_stream(pi_ip: str, track_class_id: int):
 
             frame_h, frame_w = frame.shape[:2]
 
-            t_inf = time.time()
             results = model(frame, verbose=False)
-            latency["inference_ms"] = (time.time() - t_inf) * 1000
 
             for box in results[0].boxes:
                 if int(box.cls[0]) != track_class_id or float(box.conf[0]) < 0.5:
@@ -276,21 +269,20 @@ def display_stream(pi_ip: str, track_class_id: int):
                             json={"linear_vel": lv, "angular_vel": av, "tracked_object": INVERTED_CLASS_MAP.get(tracker.class_id, "N/A")},
                             timeout=0.5,
                         )
-                        rtt = (time.time() - t0) * 1000
-                        latency["post_rtt_ms"] = rtt
-                        data = r.json()
-                        latency["serial_ms"] = data.get("serial_write_ms", 0.0)
                     except requests.exceptions.RequestException as e:
                         print(f"CMD send failed: {e}")
                 threading.Thread(target=_send, daemon=True).start()
 
             text = f"lin: {cmd.linear_vel:+.2f}  ang: {cmd.angular_vel:+.2f}"
-            cv2.putText(frame, text, (8, 24 + i * 22),cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+            cv2.putText(frame, text, (8, 24),cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1)
 
             cv2.imshow("Pi Camera Stream - YOLOv8n", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
     except requests.exceptions.ConnectionError:
         print("Stream connection lost.")
+    finally:
         cv2.destroyAllWindows()
 
 

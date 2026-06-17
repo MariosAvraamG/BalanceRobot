@@ -77,14 +77,17 @@ def ultrasound_loop():
     print("start ultrasound sensor")
     ultrasound = ultrasoundSensor()
     while True:
-        time.sleep(2)
         dist = ultrasound.get_distance(5)
+        if(dist < 15):
+            time.sleep(0.5)
+        else:
+            time.sleep(2)
         if dist is None:
             print("ultrasound timeout — no echo received")
             ultrasound_override.clear()
             continue
         print(f"distance detected: {dist}cm")
-        if dist < 10:
+        if dist < 15:
             print("queuing ultrasound")
             ultrasound_override.set()
             command_queue.put((0.0, 0.0))
