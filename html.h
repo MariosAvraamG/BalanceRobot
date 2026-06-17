@@ -325,7 +325,7 @@ function switchTab(id){
 }
 
 var ESP_URL='http://192.168.1.66';
-var SRV_URL='http://192.168.1.172:5001';
+var SRV_URL='http://127.0.0.1:5001';
 
 /* ── Camera ── */
 var camRetryTimer=null;
